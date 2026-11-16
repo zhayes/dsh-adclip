@@ -1,0 +1,13 @@
+data/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+dist/
+
+# build / tooling noise
+node_modules/
+*.egg-info/
+build/
+.pytest_cache/
+*.log

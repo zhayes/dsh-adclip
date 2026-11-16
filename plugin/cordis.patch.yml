@@ -1,0 +1,10 @@
+# AdClip: local plugin bundle.
+#
+# The engine is a Python sidecar owned by the Host half. No path is configured
+# here on purpose: host/engine.js resolves the bundled engine sources (or this
+# checkout), a usable interpreter, and a free loopback port at runtime, so the
+# same package installs on any machine. Override `engineRoot`, `python` or
+# `port` on this row only when debugging a specific runtime.
+- insert:
+    - id: adclip
+      name: '@local/dsh-adclip'

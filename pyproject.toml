@@ -1,0 +1,26 @@
+[project]
+name = "adclip"
+version = "0.1.0"
+description = "Ad+ Studio: lean native-audio ad video service for the DSH plugin"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "httpx>=0.27",
+  "pydantic>=2.6",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+media = ["Pillow>=10", "numpy>=1.26"]
+asr = ["faster-whisper>=1.0"]
+ocr = ["rapidocr-onnxruntime>=1.3"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["adclip", "adclip.pipeline", "adclip.providers", "adclip.media"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

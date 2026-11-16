@@ -1,0 +1,676 @@
+"""FastAPI surface for Ad+ Studio.
+
+No pricing, quotes or billing endpoints exist. The first slice runs a local
+demo pipeline so the DSH UI, storyboard, edits, personas and stitching can be
+exercised end to end without paid credentials.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+from contextlib import asynccontextmanager
+import mimetypes
+import shutil
+import time
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
+
+from . import image_params, intents, llm, params, personas, settings, store
+from .providers import discovery
+from .media import ffmpeg
+from .media import stitch as stitch_mod
+from .models import AssistantRequest, Run, RunStep, StitchRequest
+from .pipeline import image_runner
+from .pipeline import replace as segment_replace
+from .pipeline import runner, segment
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    store.migrate_legacy()
+    store.ensure_dirs()
+    settings.load_into_env()
+    personas.ensure_default()
+    yield
+
+
+app = FastAPI(title="Ad+ Studio", version="0.1.0", lifespan=_lifespan)
+VERSION = "0.1.0"
+
+
+def _media_type(path: Path) -> str:
+    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _probe_asset(asset_id: str) -> dict[str, Any]:
+    record = store.get_asset(asset_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="asset not found")
+    target = store.safe_media_path(record["path"])
+    try:
+        if record.get("kind") == "video":
+            facts = ffmpeg.probe(target)
+            record.update({k: facts[k] for k in ("width", "height", "duration_s")})
+        elif record.get("kind") == "image":
+            from PIL import Image
+
+            with Image.open(target) as image:
+                record["width"], record["height"] = image.size
+    except Exception:
+        pass
+    return record
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    models = params.catalog()
+    return {
+        "ok": True,
+        "service": "adclip",
+        "version": VERSION,
+        "demo": True,
+        "data": str(store.DATA),
+        "models": len(models),
+        "available_models": [row["id"] for row in models if row.get("available")],
+        "text_llm": llm.available(),
+        "text_model": llm.model_label(),
+        "text_provider": llm.provider_label(),
+        "text_llm_last_error": llm.LAST_ERROR,
+        "runs": len(store.list_runs(limit=200)),
+        "deps": ffmpeg.dependencies(),
+    }
+
+
+@app.get("/scenarios")
+def scenarios() -> dict[str, Any]:
+    return {"scenarios": params.SCENARIOS}
+
+
+@app.get("/models")
+def models() -> dict[str, Any]:
+    return {"models": params.catalog()}
+
+
+@app.post("/assets/upload")
+async def upload_asset(request: Request, kind: str = "video", name: str = "") -> dict[str, Any]:
+    if kind not in {"image", "video"}:
+        raise HTTPException(status_code=400, detail="only image and video assets are supported")
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(raw) > 2 * 1024**3:
+        raise HTTPException(status_code=413, detail="file too large")
+    import hashlib
+
+    mime = request.headers.get("content-type") or "application/octet-stream"
+    digest = hashlib.sha256(raw).hexdigest()
+    existing = store.get_asset_by_sha(digest)
+    if existing is not None:
+        return {"ok": True, "asset": existing, "deduplicated": True}
+    try:
+        asset = store.create_asset(raw, name or f"upload-{store.new_id('file')}", kind, mime)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record = _probe_asset(asset.id)
+    return {"ok": True, "asset": record}
+
+
+@app.get("/assets")
+def list_assets(
+    kind: str = "", q: str = "", offset: int = 0, limit: int = 24,
+    from_: str = Query("", alias="from"), to: str = "",
+) -> dict[str, Any]:
+    rows, total = store.list_assets_page(kind=kind, query=q, offset=offset, limit=limit, date_from=from_, date_to=to)
+    return {"assets": rows, "total": total, "offset": max(0, offset), "limit": max(1, min(limit, 200)), "has_more": offset + len(rows) < total}
+
+
+@app.get("/assets/{asset_id}")
+def get_asset(asset_id: str) -> dict[str, Any]:
+    record = store.get_asset(asset_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="asset not found")
+    return {"asset": record}
+
+
+@app.get("/media")
+def media(path: str) -> FileResponse:
+    try:
+        target = store.safe_media_path(path)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(target, media_type=_media_type(target))
+
+
+# ---------------------------------------------------------------------------
+# local provider keys
+# ---------------------------------------------------------------------------
+@app.get("/settings/models")
+def get_settings_models() -> dict[str, Any]:
+    return {"enabled": settings.enabled_models(), "models": params.catalog()}
+
+
+@app.post("/settings/models")
+def set_settings_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    valid = {str(row["id"]) for row in params.catalog()}
+    enabled = []
+    for value in payload.get("enabled") or []:
+        value = str(value or "").strip()
+        if value in valid and value not in enabled:
+            enabled.append(value)
+    settings.set_enabled_models(enabled)
+    return {"enabled": enabled, "models": params.catalog()}
+
+
+@app.get("/models/discover")
+def discover_models() -> dict[str, Any]:
+    return {"providers": discovery.discover()}
+
+
+@app.get("/settings/keys")
+def get_settings_keys() -> dict[str, Any]:
+    return {"keys": settings.status()}
+
+
+@app.post("/settings/keys")
+def set_settings_key(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        rows = settings.set_key(str(payload.get("name") or ""), str(payload.get("value") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"keys": rows, "models": params.catalog()}
+
+
+# ---------------------------------------------------------------------------
+# personas
+# ---------------------------------------------------------------------------
+@app.get("/personas")
+def list_personas() -> dict[str, Any]:
+    return {"personas": store.list_personas()}
+
+
+@app.post("/personas")
+def create_persona(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return {"persona": personas.create(payload)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/personas/{persona_id}")
+def patch_persona(persona_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    result = personas.update(persona_id, payload)
+    if result is None:
+        raise HTTPException(status_code=404, detail="persona not found")
+    return {"persona": result}
+
+
+@app.delete("/personas/{persona_id}")
+def remove_persona(persona_id: str) -> dict[str, Any]:
+    return {"removed": personas.delete(persona_id)}
+
+
+# ---------------------------------------------------------------------------
+# runs
+# ---------------------------------------------------------------------------
+def _scenario_or_404(scenario_id: str) -> dict[str, Any]:
+    scenario = params.scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=400, detail=f"unknown scenario: {scenario_id}")
+    if scenario.get("status") != "ready":
+        raise HTTPException(status_code=409, detail="scenario is not ready")
+    return scenario
+
+
+def _validate_inputs(scenario: dict[str, Any], inputs: dict[str, Any]) -> None:
+    if scenario["id"] == "viral-remake":
+        ref = inputs.get("reference_asset_id")
+        if not ref or store.get_asset(ref) is None:
+            raise HTTPException(status_code=400, detail="reference video is required")
+    if scenario["id"] == "text-to-video" and not str(inputs.get("brief") or "").strip():
+        raise HTTPException(status_code=400, detail="brief is required")
+
+
+def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any], *, title: str = "", parent: Run | None = None, changes: list[dict[str, Any]] | None = None) -> Run:
+    run_id = store.new_id("run")
+    store.run_dir(run_id).mkdir(parents=True, exist_ok=True)
+    (store.run_dir(run_id) / "artifacts").mkdir(parents=True, exist_ok=True)
+    persona_map = dict((advanced or {}).get("persona_map") or {})
+    persona_snapshot = {}
+    persona_obj = (advanced or {}).get("persona")
+    if isinstance(persona_obj, dict):
+        persona_snapshot = persona_obj
+    if not title:
+        brief = str(inputs.get("brief") or "").strip()
+        head = (brief.split("。")[0].split("，")[0] or "").strip()[:26]
+        label = params.scenario(scenario_id)["label"]
+        title = f"{label} · {head}" if head else label
+    run = Run(
+        id=run_id,
+        scenario=scenario_id,
+        title=title[:60],
+        status="queued",
+        step="queued",
+        generation_mode=str((advanced or {}).get("generation_mode") or "fast"),
+        inputs=inputs,
+        advanced=advanced,
+        persona_map=persona_map,
+        persona_snapshot=persona_snapshot,
+        steps=[RunStep(name=name, label=label) for name, label, _ in runner.STEPS],
+        created_at=store.now(),
+        parent_run_id=parent.id if parent else None,
+        version=(parent.version + 1) if parent else 1,
+        changes=changes or [],
+        demo=True,
+    )
+    store.write_run(run)
+    runner.manager.start(run.id)
+    return run
+
+
+@app.post("/runs")
+def create_run(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    scenario_id = str(payload.get("scenario") or "viral-remake")
+    scenario = _scenario_or_404(scenario_id)
+    inputs = dict(payload.get("inputs") or {})
+    advanced = params.merged_advanced(dict(payload.get("advanced") or {}))
+    _validate_inputs(scenario, inputs)
+    run = _new_run(scenario_id, inputs, advanced, title=str(payload.get("title") or ""))
+    return JSONResponse(status_code=202, content={"run": run.model_dump()})
+
+
+@app.get("/image/models")
+def get_image_models() -> dict[str, Any]:
+    rows = image_params.catalog()
+    return {"models": rows, "available": any(row.get("available") for row in rows)}
+
+
+@app.post("/images")
+def create_image(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    try:
+        run = image_runner.create(
+            prompt,
+            model_id=str(payload.get("model") or ""),
+            aspect=str(payload.get("aspect") or "1:1"),
+            area=str(payload.get("area") or "2K"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse(status_code=202, content={"run": run.model_dump()})
+
+
+@app.post("/images/{run_id}/retry")
+def retry_image(run_id: str) -> JSONResponse:
+    parent = store.read_run(run_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if parent.scenario != "text-to-image":
+        raise HTTPException(status_code=409, detail="not an image run")
+    advanced = parent.advanced or {}
+    try:
+        run = image_runner.create(
+            str((parent.inputs or {}).get("prompt") or ""),
+            model_id=str(advanced.get("model") or ""),
+            aspect=str(advanced.get("aspect") or "1:1"),
+            area=str(advanced.get("area") or "2K"),
+            parent=parent,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse(status_code=202, content={"run": run.model_dump()})
+
+
+@app.get("/runs")
+def list_runs(
+    offset: int = 0, limit: int = 20, q: str = "",
+    from_: str = Query("", alias="from"), to: str = "", status: str = "",
+    scenario: str = "", sort: str = "created_desc",
+) -> dict[str, Any]:
+    rows, total = store.list_runs_page(
+        offset=offset, limit=limit, query=q, date_from=from_, date_to=to,
+        status=status, scenario=scenario, sort=sort,
+    )
+    return {"runs": rows, "total": total, "offset": max(0, offset), "limit": max(1, min(limit, 200)), "has_more": offset + len(rows) < total}
+
+
+@app.post("/runs/export")
+def export_runs(payload: dict[str, Any] = Body(...)) -> FileResponse:
+    ids = [str(x) for x in (payload.get("run_ids") or []) if str(x).strip()]
+    ids = list(dict.fromkeys(ids))[:50]
+    if not ids:
+        raise HTTPException(status_code=400, detail="run_ids is required")
+    export_dir = store.DATA / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    target = export_dir / f"adplus-export-{int(time.time())}.zip"
+    included = []
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for run_id in ids:
+            run = store.read_run(run_id)
+            if run is None or run.status != "succeeded":
+                continue
+            root = store.run_dir(run_id)
+            folder = run_id
+            zf.write(root / "run.json", arcname=f"{folder}/run.json")
+            for name in ("final.mp4", "image.jpg", "subtitles.srt", "qa.json", "script.json", "skeleton.json", "storyboard.json"):
+                path = root / "artifacts" / name
+                if path.is_file():
+                    zf.write(path, arcname=f"{folder}/artifacts/{name}")
+            included.append(run_id)
+    if not included:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="no succeeded runs to export")
+    return FileResponse(target, media_type="application/zip", filename=target.name)
+
+
+@app.patch("/runs/{run_id}")
+def rename_run(run_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    run.title = title[:120]
+    store.write_run(run)
+    return {"run": run.model_dump()}
+
+
+@app.get("/runs/{run_id}")
+def get_run(run_id: str) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    data = run.model_dump()
+    storyboard = store.read_json(store.run_dir(run_id) / "artifacts" / "storyboard.json")
+    if storyboard:
+        data["storyboard"] = storyboard.get("segments") or []
+    return {"run": data}
+
+
+@app.post("/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    run.cancel_requested = True
+    if run.status in {"queued", "running"}:
+        run.status = "canceled"
+        run.error = "已取消"
+        run.finished_at = store.now()
+    store.write_run(run)
+    return {"ok": True, "run": run.model_dump()}
+
+
+@app.post("/runs/{run_id}/retry")
+def retry_run(run_id: str) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    new_run = _new_run(run.scenario, copy.deepcopy(run.inputs), copy.deepcopy(run.advanced), title=run.title, parent=run, changes=[])
+    return {"run": new_run.model_dump()}
+
+
+@app.get("/runs/{run_id}/storyboard")
+def storyboard(run_id: str) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    data = store.read_json(store.run_dir(run_id) / "artifacts" / "storyboard.json")
+    if not data:
+        data = segment.build_storyboard(run_id)
+    return data
+
+
+def _apply_changes(advanced: dict[str, Any], inputs: dict[str, Any], changes: list[dict[str, Any]]) -> None:
+    for change in changes:
+        field = str(change.get("field") or "")
+        value = change.get("to")
+        if field.startswith("advanced."):
+            advanced[field.split(".", 1)[1]] = value
+        elif field.startswith("post."):
+            advanced[field.split(".", 1)[1]] = value
+        elif field.startswith("persona."):
+            persona = dict(advanced.get("persona") or {})
+            persona[field.split(".", 1)[1]] = value
+            advanced["persona"] = persona
+        elif field == "inputs.brief":
+            inputs["brief"] = value
+
+
+def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
+    """Apply post-only changes without calling any video model."""
+    run_id = store.new_id("run")
+    root = store.run_dir(run_id) / "artifacts"
+    root.mkdir(parents=True, exist_ok=True)
+    src = store.run_dir(parent.id) / "artifacts"
+    for name in ("script.json", "skeleton.json", "storyboard.json", "qa.json", "subtitles.srt"):
+        source = src / name
+        if source.is_file():
+            shutil.copy2(source, root / name)
+    advanced = copy.deepcopy(parent.advanced)
+    inputs = copy.deepcopy(parent.inputs)
+    _apply_changes(advanced, inputs, changes)
+    bitrate = str(advanced.get("export_bitrate") or "8M")
+    fps = int(advanced.get("fps") or 30)
+    source_video = src / "final.mp4"
+    if not source_video.is_file():
+        raise HTTPException(status_code=409, detail="run has no final video to post-process")
+    target = root / "final.mp4"
+    ffmpeg.transcode(
+        source_video,
+        target,
+        bitrate=bitrate,
+        fps=fps,
+        trim_start=advanced.get("trim_start"),
+        trim_end=advanced.get("trim_end"),
+    )
+    notes = []
+    if any(str((c.get("field") or "")).startswith("post.subtitle") for c in changes):
+        notes.append("当前 ffmpeg 不支持烧录字幕，字幕仍以 SRT 旁挂文件交付")
+    if any(str((c.get("field") or "")).startswith("post.music") for c in changes):
+        notes.append("音乐替换尚未接入；本次未改动音轨")
+    run = Run(
+        id=run_id,
+        scenario=parent.scenario,
+        title=parent.title,
+        status="succeeded",
+        step="post",
+        progress=1.0,
+        generation_mode=parent.generation_mode,
+        inputs=inputs,
+        advanced=advanced,
+        persona_map=copy.deepcopy(parent.persona_map),
+        persona_snapshot=copy.deepcopy(parent.persona_snapshot),
+        steps=[RunStep(name="post", label="后期", status="done", progress=1.0, started_at=store.now(), finished_at=store.now())],
+        storyboard=copy.deepcopy(parent.storyboard),
+        result={
+            "video": store.rel_to_data(target),
+            "srt": store.rel_to_data(root / "subtitles.srt") if (root / "subtitles.srt").is_file() else None,
+            "width": (parent.result or {}).get("width"),
+            "height": (parent.result or {}).get("height"),
+            "duration_s": ffmpeg.probe(target)["duration_s"],
+            "qa": (parent.result or {}).get("qa"),
+            "demo": parent.demo,
+            "model": (parent.result or {}).get("model"),
+            "post_notes": notes,
+            "post_only": True,
+        },
+        demo=parent.demo,
+        created_at=store.now(),
+        finished_at=store.now(),
+        parent_run_id=parent.id,
+        version=parent.version + 1,
+        changes=changes,
+    )
+    store.write_run(run)
+    return run
+
+
+@app.post("/runs/{run_id}/derive")
+def derive_run(run_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    parent = store.read_run(run_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    changes = list(payload.get("changes") or [])
+    if changes and all(str(change.get("stage") or "") == "post" for change in changes):
+        return {"run": _post_derive(parent, changes).model_dump()}
+    advanced = copy.deepcopy(parent.advanced)
+    inputs = copy.deepcopy(parent.inputs)
+    _apply_changes(advanced, inputs, changes)
+    title = str(payload.get("title") or parent.title)
+    new_run = _new_run(parent.scenario, inputs, advanced, title=title, parent=parent, changes=changes)
+    return {"run": new_run.model_dump()}
+
+
+@app.post("/runs/{run_id}/segments/{segment_id}/regenerate")
+def regenerate_segment(run_id: str, segment_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    parent = store.read_run(run_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    advanced = copy.deepcopy(parent.advanced)
+    inputs = copy.deepcopy(parent.inputs)
+    changes = list(payload.get("changes") or [])
+    _apply_changes(advanced, inputs, changes)
+    advanced["generation_mode"] = "fine"
+    new_run = _new_run(parent.scenario, inputs, advanced, title=parent.title, parent=parent, changes=[{"field": "selected_segment_id", "from": None, "to": segment_id, "stage": "generate", "requires_regeneration": True}] + changes)
+    return {"run": new_run.model_dump()}
+
+
+@app.post("/runs/{run_id}/segments/{segment_id}/replace")
+def replace_segment(run_id: str, segment_id: str) -> JSONResponse:
+    try:
+        run = segment_replace.start_replace(run_id, segment_id)
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+    return JSONResponse(status_code=202, content={"run": run.model_dump()})
+
+
+@app.post("/runs/{run_id}/rollback")
+def rollback_segment(run_id: str) -> dict[str, Any]:
+    try:
+        run = segment_replace.rollback(run_id)
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+    return {"run": run.model_dump()}
+
+
+@app.get("/runs/{run_id}/export")
+def export_run(run_id: str) -> FileResponse:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    root = store.run_dir(run_id)
+    target = root / "artifacts" / "export.zip"
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in ("final.mp4", "subtitles.srt", "qa.json", "script.json", "skeleton.json", "storyboard.json"):
+            path = root / "artifacts" / name
+            if path.is_file():
+                zf.write(path, arcname=name)
+    return FileResponse(target, media_type="application/zip", filename=f"{run_id}.zip")
+
+
+# ---------------------------------------------------------------------------
+# stitch
+# ---------------------------------------------------------------------------
+def _resolve_clips(payload: StitchRequest) -> list[dict[str, Any]]:
+    rows = []
+    for clip in payload.clips:
+        record = store.get_asset(clip.asset_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"asset not found: {clip.asset_id}")
+        rows.append({"path": str(store.safe_media_path(record["path"])), "in_s": clip.in_s, "out_s": clip.out_s})
+    return rows
+
+
+@app.post("/stitch/plan")
+def stitch_plan(payload: StitchRequest) -> dict[str, Any]:
+    rows = _resolve_clips(payload)
+    output = payload.output or {}
+    width, height = params.size_for(str(output.get("aspect") or "9:16"), str(output.get("resolution") or "720p"))
+    try:
+        plan = stitch_mod.plan(rows, width=width, height=height, fit=payload.fit, transition=payload.transition, audio=payload.audio)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"plan": plan, "output": output}
+
+
+@app.post("/stitch")
+def stitch(payload: StitchRequest) -> dict[str, Any]:
+    rows = _resolve_clips(payload)
+    output = payload.output or {}
+    width, height = params.size_for(str(output.get("aspect") or "9:16"), str(output.get("resolution") or "720p"))
+    try:
+        plan = stitch_mod.plan(rows, width=width, height=height, fit=payload.fit, transition=payload.transition, audio=payload.audio)
+        run_id = store.new_id("stitch")
+        target = store.run_dir(run_id) / "artifacts" / "final.mp4"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        stitch_mod.execute(plan, target)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"stitch failed: {exc}") from exc
+    asset = store.create_asset(target.read_bytes(), f"stitch-{run_id}.mp4", "video", "video/mp4")
+    record = _probe_asset(asset.id)
+    run = Run(
+        id=run_id,
+        scenario="stitch",
+        title="拼接结果",
+        status="succeeded",
+        step="done",
+        progress=1.0,
+        inputs={"asset_ids": [clip.asset_id for clip in payload.clips]},
+        advanced={"stitch": payload.model_dump()},
+        steps=[],
+        result={"video": record["path"], "asset_id": record["id"], "duration_s": record.get("duration_s"), "warnings": plan.get("warnings") or []},
+        demo=True,
+        created_at=store.now(),
+        finished_at=store.now(),
+    )
+    store.write_run(run)
+    return {"run": run.model_dump(), "asset": record, "plan": plan}
+
+
+# ---------------------------------------------------------------------------
+# context / assistant
+# ---------------------------------------------------------------------------
+@app.get("/context")
+def get_context() -> dict[str, Any]:
+    return {"context": store.read_context()}
+
+
+@app.post("/context")
+def set_context(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    return {"context": store.write_context(payload)}
+
+
+@app.post("/assistant")
+def assistant(req: AssistantRequest) -> dict[str, Any]:
+    return intents.analyze(req)
+
+
+def main() -> None:
+    import uvicorn
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--graceful-timeout", type=int, default=5)
+    args = parser.parse_args()
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        timeout_graceful_shutdown=max(1, args.graceful_timeout),
+    )
+
+
+if __name__ == "__main__":
+    main()
