@@ -85,7 +85,7 @@ AdClip therefore replaces the field-heavy form with one composer:
 - aspect/duration/resolution are extracted from the prompt when written
   (`9:16`, `8秒`, `1080p`, `竖屏`, `精细`), with a DSH `deepseek-flash` JSON parser
   as the primary path and regex as fallback. The parser handles phrases such as
-  `大概十秒` and also detects stitch intent.
+  `大概十秒`; stitch intent lives only in the DSH tool now.
 - `最近生成` is removed from the creation page; tasks live in 任务;
 - video attachments + wording such as 拼接/拼起来 triggers `/stitch`; no separate
   stitch form.
@@ -152,14 +152,16 @@ Preview: [text-composer.png](images/text-composer.png).
 
 ## Free create / image generation
 
-- Top nav label is now 自由创作; internal page has 文生视频 / 文生图片 tabs.
-- 文生图片 is enabled only when `/image/models` has an available image model
-  (MiniMax H3 Image / Highspeed with a MiniMax key).
-- The image composer is prompt-first: model, aspect and area; no video parameters.
-- Image runs use `scenario=text-to-image`, appear in 任务, and open a dedicated
+- Top nav label is 自由创作; it is a normal AI chat, not separate 文生视频 /
+  文生图片 forms.
+- One text-model selector sits in the page header; image/video models are chosen
+  by the engine and never exposed.
+- Normal chat returns a reply only. A generation proposal appears only for an
+  explicit image/video request or confirmation; the user clicks the proposal to
+  start a run.
+- Image runs use `scenario=text-to-image`, appear in 任务, and open the existing
   image result page with download / retry / prompt copy.
-- Preview: [free-create.png](images/free-create.png),
-  [image-tab.png](images/image-tab.png).
+- Stitching is not in the UI; it is the `adclip_stitch_videos` DSH tool.
 
 ## Task and asset management
 

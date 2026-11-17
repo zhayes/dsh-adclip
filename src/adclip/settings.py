@@ -16,6 +16,7 @@ from . import store
 
 FILE = store.DATA / "settings.json"
 MODEL_PREFS = store.DATA / "model_prefs.json"
+MODEL_PARAMS = store.DATA / "model_params.json"
 ALLOWED = {
     "ARK_API_KEY",
     "KLING_API_KEY",
@@ -89,6 +90,42 @@ def enabled_models() -> list[str] | None:
     except (OSError, json.JSONDecodeError):
         pass
     return None
+
+
+def model_params() -> dict[str, dict[str, Any]]:
+    """Saved per-model default parameters, keyed by model id."""
+    try:
+        data = json.loads(MODEL_PARAMS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            out[str(key)] = value
+    return out
+
+
+def model_params_for(model_id: str) -> dict[str, Any]:
+    return dict(model_params().get(str(model_id)) or {})
+
+
+def set_model_params(model_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    store.ensure_dirs()
+    data = model_params()
+    current = dict(data.get(str(model_id)) or {})
+    current.update(dict(values or {}))
+    data[str(model_id)] = current
+    tmp = MODEL_PARAMS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+    os.replace(tmp, MODEL_PARAMS)
+    try:
+        os.chmod(MODEL_PARAMS, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+    return model_params_for(model_id)
 
 
 def set_enabled_models(ids: list[str]) -> list[str]:

@@ -85,6 +85,10 @@ DEFAULT_ADVANCED = {
     "fidelity": "balanced",
     "language": "zh",
     "native_audio": True,
+    "remake_mode": "auto",
+    "replace_scope": "both",
+    "person_scope": "main",
+    "audio_mode": "regenerate",
     "subtitle": "off",
     "subtitle_size": 32,
     "music": "off",
@@ -111,6 +115,10 @@ SCENARIOS: list[dict[str, Any]] = [
             {"key": "aspect", "label": "比例", "type": "enum", "options": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"], "default": "9:16"},
             {"key": "resolution", "label": "清晰度", "type": "enum", "options": ["480p", "720p", "1080p"], "default": "720p"},
             {"key": "model", "label": "模型", "type": "model", "default": "auto"},
+            {"key": "remake_mode", "label": "复刻模式", "type": "enum", "options": ["auto"], "default": "auto"},
+            {"key": "replace_scope", "label": "替换内容", "type": "enum", "options": ["both", "product", "person"], "default": "both"},
+            {"key": "person_scope", "label": "人物范围", "type": "enum", "options": ["main", "all"], "default": "main"},
+            {"key": "audio_mode", "label": "声音", "type": "enum", "options": ["regenerate", "preserve"], "default": "regenerate"},
             {"key": "subtitle", "label": "字幕", "type": "enum", "options": ["off", "sidecar"], "default": "off"},
         ],
         "examples": [],
@@ -145,11 +153,37 @@ SCENARIOS: list[dict[str, Any]] = [
 ]
 
 
+def enforce_remake_audio(advanced: dict[str, Any]) -> dict[str, Any]:
+    """A changed product needs its own name in the spoken copy.
+
+    Preserving the source track is only valid when the product stays the same.
+    The engine coerces the unsafe combination instead of trusting a client.
+    """
+    out = dict(advanced or {})
+    scope = str(out.get("replace_scope") or "both")
+    if scope in {"both", "product"} and str(out.get("audio_mode") or "regenerate") == "preserve":
+        out["audio_mode"] = "regenerate"
+        out["audio_mode_forced"] = True
+    return out
+
+
 def scenario(scenario_id: str) -> dict[str, Any] | None:
     for row in SCENARIOS:
         if row["id"] == scenario_id:
             return row
     return None
+
+
+def scenario_defaults(scenario_id: str) -> dict[str, Any]:
+    """Defaults declared by one scenario, without the global remake defaults."""
+    scenario = next((row for row in SCENARIOS if row.get("id") == scenario_id), None)
+    if scenario is None:
+        return {}
+    return {
+        str(field.get("key")): field.get("default")
+        for field in scenario.get("advanced") or []
+        if field.get("key") and "default" in field
+    }
 
 
 def merged_advanced(values: dict[str, Any] | None) -> dict[str, Any]:

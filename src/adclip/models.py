@@ -94,7 +94,9 @@ class Run(BaseModel):
     steps: list[RunStep] = Field(default_factory=list)
     storyboard: list[StoryboardSegment] = Field(default_factory=list)
     result: Optional[dict[str, Any]] = None
+    selection: dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
+    last_edit_error: Optional[str] = None
     demo: bool = False
     cancel_requested: bool = False
     created_at: str = ""

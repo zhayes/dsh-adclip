@@ -247,6 +247,43 @@ def write_run(run: Run) -> Run:
     return run
 
 
+def repair_segment_edit_failures() -> list[str]:
+    """Restore runs that an old failed segment edit wrongly marked failed.
+
+    Only the exact historical signature is repaired: the edit failed with
+    ``segment not found`` after the run had already produced a deliverable
+    final clip and a shippable QA report. Other failures are left alone.
+    """
+    repaired: list[str] = []
+    for path in RUNS.glob("*/run.json"):
+        run = read_run(path.parent.name)
+        if run is None or run.status != "failed" or run.step != "segment":
+            continue
+        if "segment not found" not in str(run.error or ""):
+            continue
+        result = run.result or {}
+        video = str(result.get("video") or "")
+        if not video:
+            continue
+        try:
+            target = safe_media_path(video)
+        except (ValueError, FileNotFoundError):
+            continue
+        if not target.is_file():
+            continue
+        qa = result.get("qa") or {}
+        if not (qa.get("summary") or {}).get("shippable"):
+            continue
+        run.last_edit_error = str(run.error or "")
+        run.status = "succeeded"
+        run.step = "qa"
+        run.progress = 1.0
+        run.error = None
+        write_run(run)
+        repaired.append(run.id)
+    return repaired
+
+
 def read_run(run_id: str) -> Run | None:
     data = read_json(run_path(run_id))
     if not isinstance(data, dict):

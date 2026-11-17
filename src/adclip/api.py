@@ -19,8 +19,9 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from . import capabilities
 from . import catalog as model_catalog
-from . import image_params, intents, llm, params, personas, settings, store
+from . import image_params, intents, llm, params, personas, remake_planner, settings, store
 from .providers import discovery
 from .media import ffmpeg
 from .media import stitch as stitch_mod
@@ -37,11 +38,17 @@ async def _lifespan(_app: FastAPI):
     store.ensure_dirs()
     settings.load_into_env()
     personas.ensure_default()
+    try:
+        repaired = store.repair_segment_edit_failures()
+        if repaired:
+            print(f"adclip: repaired {len(repaired)} segment-edit failures: {', '.join(repaired)}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"adclip: segment-edit repair skipped: {type(exc).__name__}: {exc}")
     yield
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.2"
+VERSION = "0.1.8"
 
 
 def _media_type(path: Path) -> str:
@@ -179,6 +186,37 @@ def discover_models() -> dict[str, Any]:
     return {"providers": discovery.discover()}
 
 
+@app.get("/capabilities")
+def get_capabilities() -> dict[str, Any]:
+    return capabilities.manifest(model_catalog.rows())
+
+
+@app.get("/settings/model_params")
+def get_model_params() -> dict[str, Any]:
+    rows = []
+    for row in model_catalog.rows():
+        rows.append({
+            "id": row["id"],
+            "label": row.get("label"),
+            "params": row.get("params") or {},
+            "defaults": row.get("default_params") or {},
+        })
+    return {"models": rows, "saved": settings.model_params()}
+
+
+@app.post("/settings/model_params")
+def set_model_params(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    model_id = str(payload.get("model_id") or "").strip()
+    if not model_id or model_catalog.get(model_id) is None:
+        raise HTTPException(status_code=400, detail="unknown model")
+    try:
+        values = capabilities.validate_params(model_id, dict(payload.get("values") or {}))
+        saved = settings.set_model_params(model_id, values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "model_id": model_id, "saved": saved, "models": model_catalog.rows()}
+
+
 @app.get("/settings/keys")
 def get_settings_keys() -> dict[str, Any]:
     return {"keys": settings.status()}
@@ -244,6 +282,8 @@ def _validate_inputs(scenario: dict[str, Any], inputs: dict[str, Any]) -> None:
 
 
 def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any], *, title: str = "", parent: Run | None = None, changes: list[dict[str, Any]] | None = None) -> Run:
+    if scenario_id == "viral-remake":
+        advanced = params.enforce_remake_audio(advanced)
     run_id = store.new_id("run")
     store.run_dir(run_id).mkdir(parents=True, exist_ok=True)
     (store.run_dir(run_id) / "artifacts").mkdir(parents=True, exist_ok=True)
@@ -268,6 +308,7 @@ def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any],
         advanced=advanced,
         persona_map=persona_map,
         persona_snapshot=persona_snapshot,
+        selection=remake_planner.selection_for(scenario_id, inputs, advanced),
         steps=[RunStep(name=name, label=label) for name, label, _ in runner.STEPS],
         created_at=store.now(),
         parent_run_id=parent.id if parent else None,
@@ -285,7 +326,15 @@ def create_run(payload: dict[str, Any] = Body(...)) -> JSONResponse:
     scenario_id = str(payload.get("scenario") or "viral-remake")
     scenario = _scenario_or_404(scenario_id)
     inputs = dict(payload.get("inputs") or {})
-    advanced = params.merged_advanced(dict(payload.get("advanced") or {}))
+    raw_advanced = dict(payload.get("advanced") or {})
+    if scenario_id == "text-to-video":
+        advanced = {**params.DEFAULT_ADVANCED, **params.scenario_defaults(scenario_id), **raw_advanced}
+    else:
+        advanced = params.merged_advanced(raw_advanced)
+    if scenario_id == "viral-remake":
+        advanced["model"] = "auto"
+        advanced["remake_mode"] = "auto"
+        advanced = params.enforce_remake_audio(advanced)
     _validate_inputs(scenario, inputs)
     run = _new_run(scenario_id, inputs, advanced, title=str(payload.get("title") or ""))
     return JSONResponse(status_code=202, content={"run": run.model_dump()})
@@ -426,6 +475,25 @@ def retry_run(run_id: str) -> dict[str, Any]:
     return {"run": new_run.model_dump()}
 
 
+@app.get("/runs/{run_id}/analysis")
+def analysis(run_id: str) -> dict[str, Any]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
+    if not skeleton:
+        return {"available": False, "analysis": None, "remake_plan": None, "beats": [], "transcript": [], "confidence": {}, "notes": []}
+    return {
+        "available": True,
+        "analysis": skeleton.get("analysis") or {"mode": "legacy", "degraded": False, "reason": ""},
+        "remake_plan": skeleton.get("remake_plan") or {},
+        "beats": skeleton.get("beats") or [],
+        "transcript": skeleton.get("transcript") or [],
+        "confidence": skeleton.get("confidence") or {},
+        "notes": skeleton.get("notes") or [],
+    }
+
+
 @app.get("/runs/{run_id}/storyboard")
 def storyboard(run_id: str) -> dict[str, Any]:
     run = store.read_run(run_id)
@@ -508,6 +576,7 @@ def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
         advanced=advanced,
         persona_map=copy.deepcopy(parent.persona_map),
         persona_snapshot=copy.deepcopy(parent.persona_snapshot),
+        selection=remake_planner.selection_for(parent.scenario, inputs, advanced),
         steps=[RunStep(name="post", label="后期", status="done", progress=1.0, started_at=store.now(), finished_at=store.now())],
         storyboard=copy.deepcopy(parent.storyboard),
         result={
@@ -555,6 +624,53 @@ def derive_run(run_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, An
     return {"run": new_run.model_dump()}
 
 
+
+def _segment_for(run_id: str, segment_id: str) -> tuple[Any, dict[str, Any]]:
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    data = store.read_json(store.run_dir(run_id) / "artifacts" / "storyboard.json", {}) or {}
+    rows = list(data.get("segments") or run.storyboard or [])
+    for row in rows:
+        item = row.model_dump() if hasattr(row, "model_dump") else dict(row)
+        if str(item.get("id")) == str(segment_id):
+            return run, item
+    raise HTTPException(status_code=404, detail=f"segment not found: {segment_id}")
+
+
+def _h3_derived_edit(parent: Any, segment: dict[str, Any], instruction: str, label: str) -> Any:
+    if parent.status == "running":
+        raise HTTPException(status_code=409, detail="run is busy")
+    if parent.status != "succeeded":
+        raise HTTPException(status_code=409, detail="only a succeeded run can be edited")
+    inputs = copy.deepcopy(parent.inputs or {})
+    advanced = copy.deepcopy(parent.advanced or {})
+    start = float(segment.get("start_s") or 0)
+    end = float(segment.get("end_s") or 0)
+    action = str(segment.get("action") or "").strip()
+    scope = (
+        f"只改镜头 #{int(segment.get('index') or 0) + 1}（{start:.2f}–{end:.2f}s"
+        + (f"，原画面：{action[:120]}" if action else "")
+        + f"）：{instruction}；其余镜头、场景、动作、构图、节奏和原声按默认契约保持不变。"
+    )
+    existing = str(inputs.get("explicit_overrides") or "").strip()
+    inputs["explicit_overrides"] = (existing + "\n" + scope).strip()[:2400]
+    brief = str(inputs.get("brief") or "").strip()
+    inputs["brief"] = (brief + "\n本次修改：" + scope).strip()[:2000]
+    advanced["model"] = "auto"
+    advanced["remake_mode"] = "auto"
+    advanced.setdefault("audio_mode", "regenerate")
+    change = {
+        "field": "segment.edit",
+        "from": segment.get("id"),
+        "to": instruction[:200],
+        "stage": "generate",
+        "requires_regeneration": True,
+        "label": label,
+    }
+    return _new_run(parent.scenario, inputs, advanced, title=parent.title, parent=parent, changes=[change])
+
+
 @app.post("/runs/{run_id}/segments/{segment_id}/regenerate")
 def regenerate_segment(run_id: str, segment_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     parent = store.read_run(run_id)
@@ -571,6 +687,15 @@ def regenerate_segment(run_id: str, segment_id: str, payload: dict[str, Any] = B
 
 @app.post("/runs/{run_id}/segments/{segment_id}/replace")
 def replace_segment(run_id: str, segment_id: str) -> JSONResponse:
+    parent, segment = _segment_for(run_id, segment_id)
+    if str((parent.selection or {}).get("mode")) == "h3_reference":
+        new_run = _h3_derived_edit(
+            parent,
+            segment,
+            "按原参考契约重做这一镜，只替换人物/商品，镜头/场景/动作/构图/节奏保持原样",
+            "整条重生成镜头 #" + str(int(segment.get("index") or 0) + 1),
+        )
+        return JSONResponse(status_code=202, content={"run": new_run.model_dump()})
     try:
         run = segment_replace.start_replace(run_id, segment_id)
     except ValueError as exc:
@@ -582,10 +707,19 @@ def replace_segment(run_id: str, segment_id: str) -> JSONResponse:
 
 @app.post("/runs/{run_id}/segments/{segment_id}/edit")
 def edit_segment(run_id: str, segment_id: str, payload: dict[str, Any] = Body(...)) -> JSONResponse:
-    """Rewrite one shot from a natural-language note, then regenerate only it."""
+    """H3 edits rerun the whole clip; other modes rewrite one shot in place."""
     instruction = str(payload.get("instruction") or "").strip()
     if len(instruction) < 2:
         raise HTTPException(status_code=400, detail="instruction is required")
+    parent, segment = _segment_for(run_id, segment_id)
+    if str((parent.selection or {}).get("mode")) == "h3_reference":
+        new_run = _h3_derived_edit(
+            parent,
+            segment,
+            instruction,
+            "整条重生成镜头 #" + str(int(segment.get("index") or 0) + 1),
+        )
+        return JSONResponse(status_code=202, content={"run": new_run.model_dump()})
     try:
         run = segment_replace.start_edit(run_id, segment_id, instruction)
     except ValueError as exc:

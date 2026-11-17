@@ -6,10 +6,10 @@ from typing import Any
 
 from .. import catalog, params, store
 from ..media import ffmpeg
+from . import persona as persona_mod
 from ..providers.ark import ArkProvider
 from ..providers.kling import KlingProvider
 from ..providers.minimax import MiniMaxProvider
-from . import persona as persona_mod
 
 PROVIDERS = {"ark": ArkProvider, "kling": KlingProvider, "minimax": MiniMaxProvider}
 
@@ -28,6 +28,9 @@ def _adapter(model_id: str) -> Any | None:
 
 def resolve_model(run: Any) -> str:
     """The model id this run should use: explicit when valid, else capability-first."""
+    selection = getattr(run, "selection", None) or {}
+    if selection.get("mode") in {"h3_reference", "reference_fallback", "generation_fallback"} and selection.get("model"):
+        return str(selection["model"])
     requested = str((run.advanced or {}).get("model") or "auto")
     if requested not in {"", "auto"}:
         model = catalog.get(requested)
@@ -119,6 +122,49 @@ def _script_prompt(run: Any, script: dict[str, Any]) -> str:
     return "".join(part for part in parts if part).strip()[:1800]
 
 
+def _product_images(run: Any) -> list[Path]:
+    paths: list[Path] = []
+    for asset_id in list((run.inputs or {}).get("product_asset_ids") or [])[:3]:
+        try:
+            paths.append(store.asset_media_path(str(asset_id)))
+        except Exception:
+            continue
+    ref = (run.inputs or {}).get("reference_image_asset_id")
+    if ref:
+        try:
+            paths.append(store.asset_media_path(str(ref)))
+        except Exception:
+            pass
+    return paths
+
+
+def _persona_images(run: Any) -> list[Path]:
+    paths: list[Path] = []
+    advanced = run.advanced or {}
+    persona = advanced.get("persona") if isinstance(advanced.get("persona"), dict) else {}
+    ids = set()
+    for value in (advanced.get("persona_map") or {}).values():
+        if str(value).strip():
+            ids.add(str(value))
+    for value in (persona.get("reference_images") or []):
+        if str(value).strip():
+            ids.add(str(value))
+    for value in list(ids)[:6]:
+        try:
+            record = store.get_persona(value)
+            if record:
+                for image in (record.get("reference_images") or [])[:3]:
+                    try:
+                        paths.append(store.asset_media_path(str(image)))
+                    except Exception:
+                        continue
+            else:
+                paths.append(store.asset_media_path(value))
+        except Exception:
+            continue
+    return paths[:3]
+
+
 def _reference_images(run: Any) -> list[Path]:
     paths: list[Path] = []
     inputs = run.inputs or {}
@@ -165,32 +211,152 @@ def generate_segment(run: Any, seg: dict[str, Any], output: Path) -> dict[str, A
     return {"model": model, "path": str(output), "demo": False, "duration_s": seg_len}
 
 
+def generate_h3_reference(run_id: str) -> dict[str, Any]:
+    """Run MiniMax H3 with the reference video and replacement images."""
+    run = store.read_run(run_id)
+    if run is None:
+        raise FileNotFoundError(run_id)
+    advanced = params.merged_advanced(run.advanced)
+    selection = getattr(run, "selection", None) or {}
+    ref_id = (run.inputs or {}).get("reference_asset_id")
+    if not ref_id:
+        raise RuntimeError("H3 参考复刻需要参考视频")
+    source = store.asset_media_path(str(ref_id))
+    facts = ffmpeg.probe(source)
+    duration = float(facts.get("duration_s") or 0)
+    if duration < 4 or duration > 15:
+        raise RuntimeError("H3 参考复刻仅支持 4–15 秒参考片")
+    if Path(source).stat().st_size > 50 * 1024 * 1024:
+        raise RuntimeError("参考片超过 MiniMax 50MB 上限")
+    products = _product_images(run)
+    personas = _persona_images(run)
+    from . import remake as remake_mod
+    script_doc = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
+    audio_mode = str(advanced.get("audio_mode") or "regenerate")
+    warnings: list[str] = []
+    if audio_mode == "regenerate" and not remake_mod._spoken_lines(script_doc):
+        audio_mode = "preserve"
+        warnings.append("脚本没有可用台词，H3 自动保留原声")
+    reference_for_h3 = Path(source)
+    audio_source = "reference" if audio_mode == "preserve" else "h3"
+    if audio_mode == "regenerate":
+        try:
+            reference_for_h3 = ffmpeg.strip_audio(source, store.run_artifact(run_id, "reference_silent.mp4"))
+        except Exception as exc:  # noqa: BLE001
+            audio_mode = "preserve"
+            audio_source = "reference"
+            reference_for_h3 = Path(source)
+            warnings.append(f"参考片静音失败，改用保留原声：{type(exc).__name__}: {exc}"[:240])
+    if audio_mode == "preserve" and not facts.get("has_audio"):
+        audio_source = "h3"
+        warnings.append("参考片没有音轨，保留原声不可用，改用 H3 生成音频")
+    prompt = remake_mod.build_h3_replace_prompt(
+        run,
+        store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {},
+        product_count=len(products),
+        person_count=len(personas),
+        script_doc=script_doc,
+        audio_mode=audio_mode,
+    )
+    target_duration = int(round(duration))
+    target_duration = max(4, min(15, target_duration))
+    resolution = str((selection.get("params") or {}).get("resolution") or advanced.get("resolution") or "768P")
+    output = store.run_artifact(run_id, "provider_raw.mp4")
+    provider = _adapter("minimax.h3")
+    if provider is None:
+        raise RuntimeError("MiniMax H3 适配器不可用")
+    provider.generate(
+        prompt,
+        images=(products + personas)[:9],
+        reference_video=Path(reference_for_h3),
+        duration=target_duration,
+        resolution=resolution,
+        aspect=str(facts.get("aspect") or advanced.get("aspect") or "9:16"),
+        model="minimax.h3",
+        output=output,
+    )
+    return {
+        "model": "minimax.h3",
+        "path": str(output),
+        "demo": False,
+        "duration_s": duration,
+        "audio_mode": audio_mode,
+        "audio_source": audio_source,
+        "warnings": warnings,
+    }
+
+
+def _provider_fatal(message: str) -> bool:
+    text = str(message or "").lower()
+    return any(token in text for token in ("insufficient balance", "余额", "quota", "unauthorized", "invalid api key", "401", "402", "403", "429", "rate limit"))
+
+
+def _video_candidates(run: Any) -> list[dict[str, Any]]:
+    selection = getattr(run, "selection", None) or {}
+    requested = str((run.advanced or {}).get("model") or "auto")
+    preferred = str(selection.get("model") or "") if requested in {"", "auto"} else requested
+    rows = catalog.with_capability("text_to_video", kind="video", usable=True)
+    ordered: list[dict[str, Any]] = []
+    if preferred:
+        ordered.extend(row for row in rows if row.get("id") == preferred)
+    ordered.extend(row for row in rows if row.get("id") != preferred)
+    return ordered
+
+
 def generate(run_id: str) -> dict[str, Any]:
     run = store.read_run(run_id)
     if run is None:
         raise FileNotFoundError(run_id)
-    model = resolve_model(run)
+    if (getattr(run, "selection", None) or {}).get("mode") == "h3_reference":
+        return generate_h3_reference(run_id)
     advanced = params.merged_advanced(run.advanced)
-    duration = max(1.0, float(advanced.get("duration") or 12))
+    selection = getattr(run, "selection", None) or {}
+    selected_duration = (selection.get("params") or {}).get("duration")
+    duration = max(1.0, float(selected_duration or advanced.get("duration") or 12))
     width, height = params.size_for(str(advanced.get("aspect") or "9:16"), str(advanced.get("resolution") or "720p"))
     ref_id = (run.inputs or {}).get("reference_asset_id")
     source = store.asset_media_path(ref_id) if ref_id else None
     result_path = store.run_artifact(run_id, "provider_raw.mp4")
-    provider = _adapter(model)
-    if provider is None:
-        # Test-only synthetic model: a local clip so the pipeline stays runnable
-        # without any provider key.
-        ffmpeg.make_synthetic_clip(source, result_path, duration=duration, width=width, height=height, fps=int(advanced.get("fps") or 30))
-        return {"model": model, "path": str(result_path), "demo": True, "duration_s": duration}
     script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
     prompt = _script_prompt(run, script)
-    provider.generate(
-        prompt,
-        images=_reference_images(run),
-        duration=int(duration),
-        resolution=str(advanced.get("resolution") or "720p"),
-        aspect=str(advanced.get("aspect") or "9:16"),
-        model=model,
-        output=result_path,
-    )
-    return {"model": model, "path": str(result_path), "demo": False, "duration_s": duration}
+    candidates = _video_candidates(run)
+    if not candidates:
+        raise RuntimeError("没有可用的视频模型：请在设置里启用对应厂商 key")
+    attempts: list[dict[str, Any]] = []
+    skipped_providers: set[str] = set()
+    for model in candidates:
+        model_id = str(model.get("id") or "")
+        provider_name = str(model.get("provider") or "")
+        if provider_name in skipped_providers:
+            attempts.append({"model": model_id, "error": "skipped: same provider failed"})
+            continue
+        try:
+            provider = _adapter(model_id)
+            if provider is None:
+                # Test-only synthetic model: local clip, no provider key.
+                ffmpeg.make_synthetic_clip(source, result_path, duration=duration, width=width, height=height, fps=int(advanced.get("fps") or 30))
+                generated = {"model": model_id, "path": str(result_path), "demo": True, "duration_s": duration}
+            else:
+                provider.generate(
+                    prompt,
+                    images=_reference_images(run),
+                    duration=int(duration),
+                    resolution=str(advanced.get("resolution") or "720p"),
+                    aspect=str(advanced.get("aspect") or "9:16"),
+                    model=model_id,
+                    output=result_path,
+                )
+                generated = {"model": model_id, "path": str(result_path), "demo": False, "duration_s": duration}
+            generated["attempts"] = attempts
+            generated["warnings"] = [f"已切换到 {model_id}"] if attempts else []
+            run = store.read_run(run_id) or run
+            run.advanced["model"] = model_id
+            if selection:
+                run.selection = {**selection, "model": model_id, "fallback": bool(attempts) or bool(selection.get("fallback"))}
+            store.write_run(run)
+            return generated
+        except Exception as exc:  # noqa: BLE001
+            attempts.append({"model": model_id, "error": f"{type(exc).__name__}: {exc}"[:500]})
+            if _provider_fatal(f"{type(exc).__name__}: {exc}"):
+                skipped_providers.add(provider_name)
+    raise RuntimeError("所有视频模型均失败：" + " | ".join(f"{item['model']}: {item['error']}" for item in attempts)[:900])

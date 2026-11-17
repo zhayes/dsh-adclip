@@ -199,6 +199,35 @@ def ensure_audio(source: str | Path, target: str | Path) -> Path:
     return Path(target)
 
 
+def strip_audio(source: str | Path, target: str | Path) -> Path:
+    """Create a video-only copy for reference models that must not hear the source."""
+    out = Path(target)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    proc = run([FFMPEG, "-v", "error", "-y", "-i", str(source), "-map", "0:v:0", "-c:v", "copy", "-an",
+                "-movflags", "+faststart", str(out)], timeout=180)
+    if proc.returncode != 0 or not out.is_file():
+        proc = run([FFMPEG, "-v", "error", "-y", "-i", str(source), "-map", "0:v:0", "-an",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart", str(out)], timeout=300)
+    if proc.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"strip_audio failed: {proc.stderr[-500:]}")
+    return out
+
+
+def replace_audio(video: str | Path, audio_source: str | Path, target: str | Path) -> Path:
+    """Keep the generated picture but use another file's audio track."""
+    out = Path(target)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    proc = run([
+        FFMPEG, "-v", "error", "-y", "-i", str(video), "-i", str(audio_source),
+        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2",
+        "-shortest", "-movflags", "+faststart", str(out),
+    ], timeout=300)
+    if proc.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"replace_audio failed: {proc.stderr[-500:]}")
+    return out
+
+
 def normalize(source: str | Path, target: str | Path, *, width: int, height: int, fps: int = 30, duration: float | None = None) -> Path:
     out = Path(target)
     out.parent.mkdir(parents=True, exist_ok=True)

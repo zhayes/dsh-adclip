@@ -6,14 +6,24 @@ DSH Web (plugin client, React)
   -> /adplus/media (Host proxy -> engine media)
   -> AdClip engine (FastAPI, 127.0.0.1, dynamic port)
        runs/<id>/run.json
-       pipeline: analyze -> gag -> script -> generate -> post -> qa
+       capabilities.py + remake_planner.py: model contract and auto selection
+       pipeline: analyze -> (H3 reference | gag/script/generate) -> post -> qa
        media/stitch.py, media/ffmpeg.py
+
+DSH agent
+  -> plugin host tools (adclip_remake_video, adclip_create_video, adclip_stitch_videos, adclip_get_run, ...)
+  -> same engine API (one operation, two callers)
 ```
 
 The engine is new code under `src/adclip/`. It does not import `adplus`,
 `vendor/openmontage` or their tools. The first slice intentionally uses a local
 `demo` provider so the full UI, storyboard, edits, personas and stitching can be
 exercised without paid credentials. Real provider adapters are the next step.
+
+Model capabilities and call parameters live in `capabilities.py`; `catalog.py`
+remains the row source. Viral remakes are auto-selected (H3 full, then Seedance
+fallback) and never ask the operator for a model. The plugin registers DSH
+tools against the same engine, so the UI and the agent share one implementation.
 
 Post production normalizes the clip and decides subtitles from the run's own
 setting: `advanced.subtitle = "off"` (default) delivers no SRT at all, while

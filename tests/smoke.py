@@ -20,6 +20,7 @@ os.environ["ADSTUDIO_DATA_DIR"] = _TEST_DATA
 os.environ["ADCLIP_TEST_MODE"] = "1"
 os.environ["ADSTUDIO_ASR"] = "0"
 os.environ["ADSTUDIO_VISION"] = "0"
+os.environ["ADSTUDIO_TEXT_PROVIDER"] = "minimax"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from adclip.api import app  # noqa: E402
@@ -114,6 +115,41 @@ def main() -> None:
         run = poll(client, res.json()["run"]["id"])
         assert run["status"] == "succeeded", run.get("error")
         assert run["result"]["video"].endswith("final.mp4")
+        assert run.get("selection", {}).get("mode") == "generation_fallback", run.get("selection")
+        capabilities = client.get("/capabilities")
+        assert capabilities.status_code == 200, capabilities.text
+        assert any(row["id"] == "minimax.h3" and row["remake"]["tier"] == "full" for row in capabilities.json()["models"])
+        analysis = client.get(f"/runs/{run['id']}/analysis")
+        assert analysis.status_code == 200, analysis.text
+        assert analysis.json()["available"] is True
+        assert analysis.json()["analysis"]["mode"] in {"heuristic", "frames"}
+        params = client.get("/settings/model_params")
+        assert params.status_code == 200
+        saved = client.post("/settings/model_params", json={"model_id": "minimax.h3", "values": {"resolution": "2K"}})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["saved"]["resolution"] == "2K"
+
+        # Free creation uses scenario defaults when the UI hides the parameter
+        # controls; a description-only run still lands on 9:16 / 8s / 720p.
+        free = client.post("/runs", json={
+            "scenario": "text-to-video",
+            "inputs": {"brief": "一位女性在明亮的厨房里展示一瓶饮料，最后把产品举到镜头前。"},
+        })
+        assert free.status_code == 202, free.text
+        free_run = free.json()["run"]
+        assert free_run["advanced"]["duration"] == 8, free_run["advanced"]
+        assert free_run["advanced"]["aspect"] == "9:16", free_run["advanced"]
+        assert free_run["advanced"]["resolution"] == "720p", free_run["advanced"]
+        assert free_run["advanced"]["model"] == "auto", free_run["advanced"]
+        free_done = poll(client, free_run["id"])
+        assert free_done["status"] == "succeeded", free_done.get("error")
+        overridden = client.post("/runs", json={
+            "scenario": "text-to-video",
+            "inputs": {"brief": "横屏 10 秒 1080p，一位女性展示饮料。"},
+            "advanced": {"aspect": "16:9", "duration": 10, "resolution": "1080p"},
+        })
+        assert overridden.status_code == 202, overridden.text
+        assert overridden.json()["run"]["advanced"]["aspect"] == "16:9"
 
         # Subtitles default to off: no SRT, and QA says so instead of warning.
         assert run["result"].get("srt") is None, run["result"].get("srt")

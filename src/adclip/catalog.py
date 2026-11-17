@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any
 
-from . import settings
+from . import capabilities, settings
 
 VIDEO_CAPABILITIES = ("text_to_video", "image_to_video", "reference_to_video")
 IMAGE_CAPABILITIES = ("text_to_image", "image_to_image")
@@ -63,12 +63,12 @@ VIDEO_ROWS: list[dict[str, Any]] = [
         "capabilities": ["text_to_video", "image_to_video", "reference_to_video"],
         "native_audio": True,
         "durations": [4, 5, 8, 10, 12, 15],
-        "resolutions": ["480p", "720p", "1080p"],
+        "resolutions": ["480p", "720p"],
         "aspects": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"],
         "max_duration_s": 15,
         "requires": ["ARK_API_KEY"],
         "adapter_ready": True,
-        "tags": ["Mini", "原生音频", "已实测"],
+        "tags": ["Mini", "原生音频", "最高 720p", "已实测"],
         "reason": "未配置 ARK_API_KEY",
     },
     {
@@ -80,12 +80,12 @@ VIDEO_ROWS: list[dict[str, Any]] = [
         "capabilities": ["text_to_video", "image_to_video", "reference_to_video"],
         "native_audio": True,
         "durations": [4, 5, 8, 10, 12, 15],
-        "resolutions": ["480p", "720p", "1080p"],
+        "resolutions": ["480p", "720p"],
         "aspects": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"],
         "max_duration_s": 15,
         "requires": ["ARK_API_KEY"],
         "adapter_ready": True,
-        "tags": ["Fast", "原生音频", "已实测"],
+        "tags": ["Fast", "原生音频", "最高 720p", "已实测"],
         "reason": "未配置 ARK_API_KEY",
     },
     {
@@ -127,16 +127,16 @@ VIDEO_ROWS: list[dict[str, Any]] = [
         "kind": "video",
         "provider": "minimax",
         "model": "MiniMax-H3",
-        "label": "MiniMax H3（2K · 原生对白）",
-        "capabilities": ["text_to_video", "image_to_video"],
+        "label": "MiniMax H3（参考复刻 · 原生对白）",
+        "capabilities": ["text_to_video", "image_to_video", "reference_to_video"],
         "native_audio": True,
         "durations": [4, 5, 6, 8, 10, 12, 15],
-        "resolutions": ["2K"],
+        "resolutions": ["768P", "2K"],
         "aspects": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"],
         "max_duration_s": 15,
         "requires": ["MINIMAX_API_KEY"],
         "adapter_ready": True,
-        "tags": ["2K", "中文原生对白已验证"],
+        "tags": ["768P/2K", "中文原生对白已验证", "完整复刻首选"],
         "reason": "未配置 MINIMAX_API_KEY",
     },
     {
@@ -277,7 +277,7 @@ def evaluate(row: dict[str, Any], enabled_ids: list[str] | None = None, kind_has
     yet". A kind with no saved ids at all stays enabled, so a prefs file written
     before that kind existed does not hide it.
     """
-    item = dict(row)
+    item = capabilities.merge(dict(row))
     item.setdefault("capabilities", [])
     if item["kind"] == "video":
         item["modes"] = list(item["capabilities"])
@@ -296,6 +296,10 @@ def evaluate(row: dict[str, Any], enabled_ids: list[str] | None = None, kind_has
         item["enabled"] = True
     else:
         item["enabled"] = item["id"] in enabled_ids
+    try:
+        item["default_params"] = {**item.get("default_params", {}), **settings.model_params_for(item["id"])}
+    except Exception:
+        pass
     item["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     return item
 

@@ -5,7 +5,7 @@
 - New `src/adclip/` FastAPI service, no legacy imports.
 - DSH plugin installed and active (`main:adplus`, `sidebar.panellist:adplus`).
 - Demo pipeline: upload → analyze → script → generate → post → QA.
-- Storyboard API/view, derived versions, two-clip stitch with black/blur/crop fit.
+- Storyboard API/view, derived versions, two-clip stitch backend (DSH tool only) with black/blur/crop fit.
 - Persona CRUD API + inline persona fields + saved-persona picker + a
   dedicated 模特库 tab for create/edit/delete and real-person consent.
 - Single-shot replacement is verified with both demo and MiniMax H3: the H3
@@ -54,6 +54,40 @@
   normalized to the selected persona in gag, script and provider prompts. A real
   Ark Fast run with female persona produced three women.
 - Smoke test now uses an isolated temp data dir and covers post-only derive.
+- Model capability registry (`capabilities.py`) covers all current Settings models
+  with inputs/outputs/params/remake tier/defaults; Settings can inspect and save
+  per-model defaults. Viral remakes auto-select H3 first, then Seedance
+  reference/generation, then analysis-only; the Recreate page no longer offers a
+  model picker. H3 reference runs use the MiniMax Files API and
+  `mm_file://` content; the pipeline supports a full H3 reference branch.
+- The plugin registers DSH agent tools (`adclip_remake_video`, `adclip_get_run`,
+  `adclip_get_analysis`, `adclip_list_capabilities`, `adclip_cancel_run`) and a
+  system-prompt section for the remake preservation contract.
+- The remake page no longer attaches a text-model polish control or example
+  prompts. Uploaded reference videos and product images open a click-to-zoom
+  preview modal. "自由创作" is now a description → plan → confirm conversation
+  with one text-model selector and no image/video parameter controls; text
+  defaults to 9:16/8s/720p for video and 1:1/2K for images. Only explicit
+  generation requests get a proposal; normal chat never starts a run. Stitching
+  is exposed only as `adclip_stitch_videos`; DSH also gets
+  `adclip_create_image`, `adclip_create_video`, `adclip_list_assets` and
+  `adclip_list_personas`. The remake and free-create prompt sections are
+  separate so the remake contract is unchanged.
+- Image and free-video generation now fall back through the enabled model
+  capability registry. A provider-level error (insufficient balance, auth,
+  rate limit, 402/403/429) skips that provider and the next compatible model
+  finishes the same run; attempts and a UI warning are stored on the result.
+- H3 runs now generate gag/script text. `audio_mode=regenerate` strips the
+  reference audio, sends a silent reference to H3 and feeds sequential shot
+  lines into the prompt; `preserve` keeps the source track and post replaces the
+  H3 audio with the reference audio, eliminating old/new voice overlap.
+  Preserve is person-only; replacing the product forces regenerate. Remake
+  duration/aspect follow the probed reference and post trims to it, so the
+  output cannot drift with the old manual controls. Storyboard
+  edits on H3 create a derived whole-clip rerun instead of a per-shot splice;
+  non-H3 edit failures restore the prior successful state and set
+  `last_edit_error`. Startup repair restores older runs wrongly marked failed by
+  the `segment not found` edit bug.
 
 ## Pending
 

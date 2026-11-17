@@ -48,6 +48,39 @@ def _pcm(path: str | Path) -> bytes:
     return proc.stdout
 
 
+def transcribe_words(path: str | Path, *, max_seconds: float = 60.0) -> list[dict[str, Any]]:
+    """Word-level timestamps for overlap/QA checks; best-effort like transcribe()."""
+    if not available() or not Path(path).is_file():
+        return []
+    try:
+        import numpy as np
+
+        audio = np.frombuffer(_pcm(path), dtype=np.float32)
+        if audio.size < 1600:
+            return []
+        max_samples = int(max_seconds * 16000)
+        if audio.size > max_samples:
+            audio = audio[:max_samples]
+        model = _load_model()
+        segments, _info = model.transcribe(
+            audio,
+            language=os.environ.get("ADSTUDIO_ASR_LANGUAGE", "zh"),
+            vad_filter=True,
+            beam_size=1,
+            condition_on_previous_text=False,
+            word_timestamps=True,
+        )
+        rows = []
+        for seg in segments:
+            for word in seg.words or []:
+                text = str(word.word or "").strip()
+                if text:
+                    rows.append({"start_s": round(float(word.start), 3), "end_s": round(float(word.end), 3), "text": text})
+        return rows
+    except Exception:
+        return []
+
+
 def transcribe(path: str | Path, *, max_seconds: float = 60.0) -> list[dict[str, Any]]:
     if not available() or not Path(path).is_file():
         return []

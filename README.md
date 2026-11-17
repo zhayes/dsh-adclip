@@ -22,6 +22,11 @@ PYTHONPATH=src .venv/bin/python -m adclip.api --port 8787
 
 ```bash
 PYTHONPATH=src .venv/bin/python tests/smoke.py
+PYTHONPATH=src .venv/bin/python tests/capabilities.py
+PYTHONPATH=src .venv/bin/python tests/minimax_h3.py
+PYTHONPATH=src .venv/bin/python tests/remake_h3.py
+PYTHONPATH=src .venv/bin/python tests/segment_edit.py
+PYTHONPATH=src .venv/bin/python tests/script_rules.py
 node tests/preflight.mjs        # first-run environment checks (all platforms)
 ```
 
@@ -58,6 +63,42 @@ The DSH plugin sets `ADSTUDIO_DATA_DIR` to a stable user directory:
 On first startup the engine copies the repository `data/` directory into that
 location. The legacy directory is left untouched. Do not put runtime data back
 inside the plugin package.
+
+## Remake selection and DSH tools
+
+A viral remake no longer asks the operator to pick a model. `src/adclip/capabilities.py`
+defines every current model's inputs, outputs, parameters, remake tier and
+defaults; `src/adclip/remake_planner.py` chooses at run time:
+
+1. `minimax.h3` when available — reference video + reference images + source
+   audio, preserving camera/scene/action/composition/rhythm and replacing only
+   the requested people/products;
+2. Seedance reference/generation models when H3 is unavailable;
+3. analysis-only when no video model is usable. Hailuo 2.3 Fast is image-to-video
+   only and is not a remake candidate.
+
+The plugin exposes `adclip_remake_video`, `adclip_create_video`, `adclip_stitch_videos`, `adclip_get_run`, `adclip_get_analysis`,
+`adclip_list_capabilities` and `adclip_cancel_run` to the DSH agent, plus a
+system-prompt section that states the preservation contract and tells the agent
+not to ask the user for a model. Settings shows each model's capability contract
+and lets the operator save default parameters. There is no pricing or billing
+surface; the planner uses internal cost weights only.
+
+H3 reference material is uploaded through the MiniMax Files API
+(`video_generation_input`) and referenced as `mm_file://{file_id}`. H3 accepts a
+4–15 second reference and outputs native audio. H3 runs still generate a
+script. `audio_mode=regenerate` (default) strips the reference audio before H3
+and puts the shot lines into the prompt so the product/price copy is spoken;
+`audio_mode=preserve` keeps the source audio and the post step replaces the
+H3-generated track with the reference track, so the two voices cannot overlap.
+Preserve is only exposed when the product is unchanged (person-only replacement);
+a product replacement forces regenerate because the source track still names the
+old product. Viral-remake duration and aspect follow the reference automatically;
+the engine probes the actual source, trims the output to that duration and uses
+the reference aspect, so the old manual duration control cannot drift. Because H3 edits whole clips, a storyboard edit creates a new derived run
+with the shot instruction in `explicit_overrides`; it never rewrites the
+successful parent run. Failed non-H3 segment edits restore the last deliverable
+and record `last_edit_error` instead of marking the run failed.
 
 ## Reference analysis
 

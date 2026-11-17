@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useRef, useCallback } = React
 
     const boot = window.__ADPLUS_STUDIO__ || {}
+    const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)
     const API = boot.base || '/adplus/api'
     const MEDIA = boot.media || '/adplus/media'
     let TOKEN = boot.token || ''
@@ -21,12 +22,20 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = `
-.adp-root{height:100%;min-height:520px;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;font-variant-numeric:tabular-nums}
-.adp-top{display:flex;align-items:center;gap:14px;padding:0 20px;height:54px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);flex:0 0 auto}
-.adp-brand{font-weight:750;letter-spacing:-.3px;font-size:15px;display:flex;align-items:baseline;gap:5px}
+.adp-root.adp-mac .adp-top{padding-left:max(150px,env(safe-area-inset-left) + 138px)}
+.adp-root.adp-mac .adp-brand{display:none}
+.adp-root.adp-mac .adp-tabs{margin-left:0}
+.adp-root.adp-mac.adp-sidebar-open .adp-top{padding-left:max(20px,env(safe-area-inset-left) + 12px)}
+.adp-root.adp-mac.adp-sidebar-open .adp-brand{display:flex}
+.adp-root.adp-mac.adp-sidebar-open .adp-tabs{margin-left:10px}
+.adp-root{height:100%;min-height:520px;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;font-variant-numeric:tabular-nums}
+.adp-top{display:flex;align-items:center;gap:14px;padding:0 20px 0 max(20px,env(safe-area-inset-left) + 12px);height:54px;box-sizing:border-box;overflow:hidden;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);flex:0 0 auto;min-width:0;position:relative;z-index:2}
+.adp-brand{font-weight:750;letter-spacing:-.3px;font-size:15px;display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;min-width:max-content;line-height:1;height:auto}
 .adp-brand:after{content:"";width:5px;height:5px;border-radius:50%;background:#E5B45C;display:inline-block}
-.adp-sub{color:var(--dsw-alias-label-secondary);font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}
-.adp-tabs{display:flex;gap:2px;margin-left:10px;height:100%;align-items:stretch}
+.adp-sub{color:var(--dsw-alias-label-secondary);font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;flex:0 1 auto;min-width:0;max-width:210px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;height:auto;line-height:1.2}
+.adp-tabs{display:flex;gap:2px;margin-left:10px;height:100%;align-items:stretch;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
+.adp-tabs::-webkit-scrollbar{display:none}
+.adp-tab{flex:0 0 auto}
 .adp-tab{border:0;background:transparent;color:var(--dsw-alias-label-secondary);padding:0 12px;cursor:pointer;font:inherit;position:relative;height:100%}
 .adp-tab:hover{color:var(--dsw-alias-label-primary)}
 .adp-tab.on{color:var(--dsw-alias-label-primary);font-weight:650}
@@ -37,7 +46,7 @@ window.__ModuleLoader__.load({
 .adp-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:2px 0 16px}
 .adp-eyebrow{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#C99B54;margin-bottom:5px}
 .adp-title{font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-.5px;margin:0}
-.adp-lede{color:var(--dsw-alias-label-secondary);font-size:12.5px;margin:6px 0 0;max-width:620px}
+.adp-lede{color:var(--dsw-alias-label-secondary);font-size:12.5px;margin:6px 0 0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .adp-lede.adp-nowrap{max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .adp-page-meta{display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-secondary);font-size:11px;padding-bottom:2px}
 .adp-panel{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
@@ -92,7 +101,7 @@ window.__ModuleLoader__.load({
 .adp-action-note{font-size:10.5px;color:var(--dsw-alias-label-secondary);line-height:1.45}
 .adp-primary{border:0;border-radius:8px;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);padding:9px 16px;font:inherit;font-weight:700;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .adp-primary:hover{opacity:.88}
-.adp-primary:focus-visible,.adp-btn:focus-visible,.adp-example:focus-visible,.adp-drop:focus-visible,.adp-media-add:focus-visible{outline:2px solid #C99B54;outline-offset:2px}
+.adp-primary:focus-visible,.adp-btn:focus-visible,.adp-drop:focus-visible,.adp-media-add:focus-visible{outline:2px solid #C99B54;outline-offset:2px}
 .adp-primary:disabled{opacity:.38;cursor:not-allowed}
 .adp-primary .arrow{font-size:14px;line-height:1;font-weight:400}
 .adp-card{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:12px;padding:14px}
@@ -171,12 +180,82 @@ window.__ModuleLoader__.load({
 .adp-sb-card img{width:100%;height:108px;object-fit:cover;display:block;background:#111}
 .adp-sb-meta{padding:7px 8px;display:flex;flex-direction:column;gap:3px}
 .adp-chat{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto;padding:2px}
+.adp-drop.has-preview{cursor:zoom-in}
+.adp-drop-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.adp-drop-action{height:22px;padding:0 7px;font-size:10px;background:rgba(0,0,0,.45);border-color:rgba(255,255,255,.22);color:#fff}
+.adp-media.has-preview{cursor:zoom-in}
+.adp-thread{display:flex;flex-direction:column;gap:9px;max-height:52vh;min-height:280px;overflow:auto;padding:12px 0 2px;margin-bottom:10px}
+.adp-create-thread{min-height:340px;max-height:none}
+.adp-thread-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:22px 18px;text-align:center;display:flex;flex-direction:column;gap:7px;color:var(--dsw-alias-label-secondary)}
+.adp-thread-empty b{font-size:12.5px;color:var(--dsw-alias-label-primary);font-weight:650}
+.adp-thread-empty span{font-size:10.5px;line-height:1.6;max-width:520px;margin:0 auto}
+.adp-thread .adp-msg{max-width:min(680px,92%);align-self:flex-start}
+.adp-thread .adp-msg.user{align-self:flex-end}
+.adp-plan{margin-top:9px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);padding:9px 10px;display:flex;flex-direction:column;gap:5px}
+.adp-plan-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:10.5px;color:var(--dsw-alias-label-secondary)}
+.adp-plan-row b{font-weight:650;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.adp-plan-brief{margin-top:3px;padding-top:7px;border-top:1px solid var(--dsw-alias-border-l1);font-size:10.5px;line-height:1.55;color:var(--dsw-alias-label-secondary);max-height:92px;overflow:auto;white-space:pre-wrap}
+.adp-plan-confirm{align-self:flex-start;margin-top:4px}
+.adp-chatpage{max-width:900px;height:calc(100dvh - 128px);min-height:560px;display:flex;flex-direction:column;margin:0 auto}
+.adp-chat-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin:0 0 8px;flex:0 0 auto}
+.adp-chat-title{min-width:0}
+.adp-chat-head .adp-title{font-size:21px}
+.adp-chat-head .adp-lede{max-width:100%}
+.adp-chat-main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.adp-chat-scroll{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:14px 2px 22px}
+.adp-chat-scroll.empty{justify-content:center;align-items:center}
+.adp-chat-empty{max-width:560px;margin:0 auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:9px;padding:24px 12px}
+.adp-chat-empty-mark{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid rgba(201,155,84,.4);color:#E2B96F;background:rgba(201,155,84,.08);font-size:18px;margin-bottom:3px}
+.adp-chat-empty h2{font-size:19px;font-weight:700;letter-spacing:-.2px;margin:0}
+.adp-chat-empty p{font-size:12px;line-height:1.65;color:var(--dsw-alias-label-secondary);margin:0}
+.adp-chat-suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:10px}
+.adp-suggestion{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:7px 12px;font:inherit;font-size:11px;cursor:pointer;transition:border-color .15s ease,color .15s ease,background .15s ease}
+.adp-suggestion:hover{border-color:#C99B54;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}
+.adp-chatpage .adp-msg{border:0;background:transparent;padding:0;max-width:100%;font-size:13.5px;line-height:1.7;align-self:stretch}
+.adp-chatpage .adp-msg.user{align-self:flex-end;max-width:min(78%,620px);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:18px 18px 6px 18px;padding:10px 14px}
+.adp-chatpage .adp-msg .adp-plan{max-width:620px;margin-top:12px;border-radius:14px;padding:12px}
+.adp-chat-composer{flex:0 0 auto;padding:8px 0 2px;background:linear-gradient(180deg,transparent,var(--dsw-alias-bg-base) 18%)}
+.adp-chat-composer .adp-composer{margin-top:0;border-radius:20px;box-shadow:0 8px 30px rgba(0,0,0,.16)}
+.adp-chat-composer .adp-composer-input{display:block;width:100%;box-sizing:border-box;min-height:88px;max-height:220px;padding:16px 18px 8px;font-size:14px;line-height:1.65;border:0!important;outline:none!important;box-shadow:none!important;resize:none;-webkit-appearance:none}
+.adp-chat-composer .adp-attachments{padding:0 14px 8px;align-items:flex-end}
+.adp-chat-composer .adp-attach{width:78px;height:78px}
+.adp-chat-composer .adp-attach-add{width:88px;height:78px;border-radius:10px;gap:3px}
+.adp-chat-composer .adp-attach-add small{font-size:9px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.adp-chat-composer .adp-attach-add:hover small{color:#C99B54}
+.adp-chat-composer .adp-composer-foot{padding:4px 10px 9px;background:transparent;border-top:0}
+.adp-text-model{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:300px}
+.adp-text-model>span{font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.05em;color:#C99B54;white-space:nowrap}
+.adp-text-model .adp-select{height:32px;max-width:240px;font-size:11px;min-width:140px}
+.adp-composer-left{display:flex;align-items:center;gap:9px;min-width:0;flex:1 1 auto;flex-wrap:wrap}
+.adp-composer-right{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto}
+.adp-chat-composer .adp-composer{overflow:visible}
+.adp-agent-icon{font-style:normal;flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:rgba(201,155,84,.12);color:#E2B96F;font-size:11px;line-height:1;border:1px solid rgba(201,155,84,.22)}
+.adp-model-picker{position:relative;display:inline-flex;min-width:0;max-width:100%}
+.adp-model-trigger{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;border:0;background:transparent;color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 5px 2px 2px;font:inherit;font-size:10.5px;cursor:pointer}
+.adp-model-trigger:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.adp-model-trigger:focus-visible{outline:1px solid #C99B54;outline-offset:1px}
+.adp-model-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;line-height:1.4}
+.adp-model-caret{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;opacity:.82;line-height:1}
+.adp-model-menu{position:absolute;left:0;bottom:calc(100% + 7px);z-index:40;min-width:220px;max-width:min(320px,82vw);max-height:300px;overflow:auto;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:11px;box-shadow:0 14px 40px rgba(0,0,0,.28);padding:5px}
+.adp-model-group+.adp-model-group{margin-top:4px;padding-top:4px;border-top:1px solid var(--dsw-alias-border-l1)}
+.adp-model-group-label{padding:5px 8px 3px;color:var(--dsw-alias-label-secondary);font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.07em;text-transform:uppercase;opacity:.75}
+.adp-model-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:0;background:transparent;color:var(--dsw-alias-label-primary);text-align:left;border-radius:7px;padding:7px 8px;font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.adp-model-option:hover,.adp-model-option.on{background:var(--dsw-alias-bg-layer-2)}
+.adp-model-option.on{color:#E2B96F}
+.adp-model-check{font-size:10px;color:#C99B54;flex:0 0 auto}
+.adp-chat-composer .adp-composer-count{margin-left:auto;margin-right:9px;font-size:10px;color:var(--dsw-alias-label-secondary);opacity:.75}
+.adp-send{flex:0 0 auto;width:34px;height:34px;border:0;border-radius:50%;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font-size:17px;font-weight:700;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.adp-send:hover{opacity:.88}
+.adp-send:disabled{opacity:.35;cursor:not-allowed}
+.adp-create-composer{margin-top:0}
+.adp-preview-backdrop{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.76);display:flex;align-items:center;justify-content:center;padding:24px}
+.adp-preview{max-width:92vw;max-height:92vh;display:flex;flex-direction:column;gap:8px;outline:none}
+.adp-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#fff;font-size:11px}
+.adp-preview-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.82}
+.adp-preview-img,.adp-preview-video{display:block;max-width:90vw;max-height:82vh;min-width:0;min-height:0;object-fit:contain;border-radius:10px;background:#000;box-shadow:0 18px 60px rgba(0,0,0,.45)}
 .adp-msg{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:8px 9px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px;white-space:pre-wrap}
 .adp-msg.user{background:var(--dsw-alias-bg-overlay)}
 .adp-change{border-left:2px solid #C99B54;padding:5px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:0 6px 6px 0;font-size:10.5px}
-.adp-table{width:100%;border-collapse:collapse;font-size:11px}
-.adp-table th,.adp-table td{text-align:left;padding:6px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);vertical-align:top}
-.adp-table th{color:var(--dsw-alias-label-secondary);font-weight:600}
 .adp-crash{min-height:520px;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--dsw-alias-bg-base)}
 .adp-crash .box{max-width:640px;border:1px solid var(--dsw-alias-state-error-primary);border-radius:12px;padding:18px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.55;white-space:pre-wrap}
 .adp-crash h3{margin:0 0 8px;font-size:14px;color:var(--dsw-alias-state-error-primary)}
@@ -213,9 +292,6 @@ window.__ModuleLoader__.load({
 .adp-conflict{margin:0 15px 10px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,transparent);border-radius:7px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 8%,transparent);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1.45}
 .adp-conflict b{color:var(--dsw-alias-state-warn-primary);font-weight:600;margin-right:6px}
 .adp-composer-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 15px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
-.adp-text-model{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:260px}
-.adp-text-model>span{font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.05em;color:#C99B54;white-space:nowrap}
-.adp-text-model .adp-select{height:32px;max-width:220px;font-size:11px;min-width:120px}
 .adp-model-select{height:32px;min-width:180px;max-width:260px;font-size:11px}
 .adp-ref-upload{position:relative;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:7px;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:pointer;overflow:hidden;max-width:260px}
 .adp-ref-upload:hover{border-color:#C99B54;color:var(--dsw-alias-label-primary)}
@@ -291,13 +367,6 @@ window.__ModuleLoader__.load({
 .adp-chip{border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:3px 9px;font-size:10.5px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
 .adp-asset-foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1.6}
 .adp-asset-foot b{display:block;color:var(--dsw-alias-label-primary);font-size:10.5px;margin-bottom:4px;font-weight:600}
-.adp-examples{margin-top:18px}
-.adp-example-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px}
-.adp-example{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:11px;text-align:left;cursor:pointer;color:var(--dsw-alias-label-primary);font:inherit;display:flex;flex-direction:column;gap:6px;min-height:92px}
-.adp-example:hover{border-color:#C99B54;background:var(--dsw-alias-bg-layer-2)}
-.adp-example .tag{font:9.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;color:#C99B54;text-transform:uppercase}
-.adp-example b{font-size:12px;font-weight:650}
-.adp-example span{font-size:10.5px;color:var(--dsw-alias-label-secondary);line-height:1.45}
 .adp-result{display:flex;flex-direction:column;gap:14px;max-width:1120px;margin:0 auto}
 .adp-result-head{display:flex;align-items:center;gap:12px;min-height:38px}
 .adp-back{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-radius:7px;padding:6px 9px;cursor:pointer;font:inherit;font-size:11.5px;white-space:nowrap}
@@ -378,15 +447,15 @@ window.__ModuleLoader__.load({
 .adp-drawer-foot{margin-top:auto;display:flex;justify-content:flex-end;gap:8px;padding:14px 16px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .adp-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background .15s ease,color .15s ease,transform .15s ease}
 .adp-icon-btn:hover{color:#E2B96F;background:rgba(201,155,84,.12);transform:translateY(-1px)}
-@media(max-width:760px){.adp-example-grid{grid-template-columns:1fr}}
 @media(hover:none){.adp-media .adp-remove{opacity:1}}
-@media(max-width:980px){.adp-panel-grid{grid-template-columns:1fr}.adp-asset-col{border-right:0;border-bottom:1px solid var(--dsw-alias-border-l1)}.adp-title{font-size:21px}}
+@media(max-width:980px){.adp-tab{padding:0 9px}.adp-panel-grid{grid-template-columns:1fr}.adp-asset-col{border-right:0;border-bottom:1px solid var(--dsw-alias-border-l1)}.adp-title{font-size:21px}}
 @media(max-width:980px){.adp-result-grid{grid-template-columns:1fr}.adp-stage{height:360px;max-width:420px;margin:0 auto;width:100%}}
 @media(max-width:760px){.adp-inputs-grid{grid-template-columns:1fr}.adp-input-brief{border-right:0;border-bottom:1px solid var(--dsw-alias-border-l1)}}
 .adp-select,.adp-field .adp-select,.adp-toolbar .adp-select,.adp-persona-modal .adp-modal-section .adp-select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,#A8ABB4 50%),linear-gradient(135deg,#A8ABB4 50%,transparent 50%);background-repeat:no-repeat;background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px;padding-right:28px}
 .adp-date-input{width:124px;flex:0 0 auto}
 .adp-upload-label{position:relative;overflow:hidden;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
-@media(max-width:620px){.adp-modal-backdrop{padding:8px}.adp-modal{max-height:94vh;width:100%}.adp-modal-body{padding:13px}.adp-modal-foot{padding:12px}.adp-persona-grid{grid-template-columns:1fr}.adp-composer-input{min-height:120px;font-size:13px}.adp-composer-foot{align-items:stretch}.adp-composer-foot .adp-primary{width:100%;justify-content:center}.adp-model-select{min-width:0;flex:1 1 auto}.adp-text-model{max-width:none;flex:1 1 100%}.adp-text-model .adp-select{max-width:none;flex:1 1 auto}.adp-top{gap:8px;padding:0 12px}.adp-sub{display:none}.adp-tabs{margin-left:0}.adp-tab{padding:0 8px}.adp-body{padding:16px 12px 32px}.adp-page-head{display:block}.adp-page-meta{margin-top:8px}.adp-field-grid.g3,.adp-field-grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.adp-actionbar{margin-left:-14px;margin-right:-14px;padding:12px 14px}.adp-form-col{padding:16px 14px 0}.adp-asset-col{padding:14px}.adp-slots{grid-template-columns:1fr 1fr}.adp-result-head{flex-wrap:wrap}.adp-result-badges{width:100%;justify-content:flex-start}.adp-stage{height:320px}.adp-shot{grid-template-columns:56px minmax(0,1fr) auto;gap:9px;padding:10px}.adp-shot-thumb{width:56px;height:76px}.adp-shot-edit span{display:none}.adp-facts{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.adp-chatpage{height:auto;min-height:calc(100dvh - 150px)}.adp-chat-head{display:block}.adp-composer-left{flex:1 1 100%}.adp-composer-right{width:100%;justify-content:flex-end}.adp-model-picker{max-width:100%}.adp-model-trigger{max-width:100%}.adp-model-menu{min-width:min(280px,86vw)}.adp-chatpage .adp-msg.user{max-width:88%}.adp-preview-backdrop{padding:8px}.adp-preview-img,.adp-preview-video{max-width:94vw;max-height:80vh}.adp-modal-backdrop{padding:8px}.adp-modal{max-height:94vh;width:100%}.adp-modal-body{padding:13px}.adp-modal-foot{padding:12px}.adp-persona-grid{grid-template-columns:1fr}.adp-composer-input{min-height:120px;font-size:13px}.adp-composer-foot{align-items:stretch}.adp-composer-foot .adp-primary{width:100%;justify-content:center}.adp-model-select{min-width:0;flex:1 1 auto}
+.adp-top{gap:8px;padding:0 12px}.adp-tabs{margin-left:0}.adp-tab{padding:0 8px}.adp-body{padding:16px 12px 32px}.adp-page-head{display:block}.adp-page-meta{margin-top:8px}.adp-field-grid.g3,.adp-field-grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.adp-actionbar{margin-left:-14px;margin-right:-14px;padding:12px 14px}.adp-form-col{padding:16px 14px 0}.adp-asset-col{padding:14px}.adp-slots{grid-template-columns:1fr 1fr}.adp-result-head{flex-wrap:wrap}.adp-result-badges{width:100%;justify-content:flex-start}.adp-stage{height:320px}.adp-shot{grid-template-columns:56px minmax(0,1fr) auto;gap:9px;padding:10px}.adp-shot-thumb{width:56px;height:76px}.adp-shot-edit span{display:none}.adp-facts{grid-template-columns:1fr 1fr}}
 
 .adp-setup{max-width:760px;margin:0 auto}
 .adp-setup-hero{margin:6px 0 18px}
@@ -558,14 +627,12 @@ window.__ModuleLoader__.load({
       return value === 'sidecar' ? 'SRT 旁挂' : '不启用'
     }
 
-    async function parseIntentWithDsh(brief, textModel) {
+    async function parseIntentWithDsh(brief) {
       try {
         const data = await api('/dsh/chat', { method: 'POST', body: {
-          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、generation_mode（fast|fine 或 null）、subtitle（off|sidecar|null，是否交付 SRT 旁挂字幕）、model_vendor（kling|ark|minimax|null，用户点名的厂商）、stitch（布尔，用户是否想把附件视频拼接）、reason（一句话）。只按用户明确表达解析，不要猜。',
+          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、generation_mode（fast|fine 或 null）、subtitle（off|sidecar|null，是否交付 SRT 旁挂字幕）、model_vendor（kling|ark|minimax|null，用户点名的厂商）、reason（一句话）。只按用户明确表达解析，不要猜。',
           messages: [{ role: 'user', content: [{ type: 'text', text: String(brief || '').slice(0, 1000) }] }],
           maxTokens: 500,
-          provider: textModel && textModel.provider,
-          model: textModel && textModel.model,
         } })
         const text = String((data.dsh && data.dsh.text) || '')
         const start = text.indexOf('{')
@@ -583,7 +650,6 @@ window.__ModuleLoader__.load({
           mode: value.generation_mode === 'fine' ? 'fine' : '',
           subtitle: ['off', 'sidecar'].includes(value.subtitle) ? value.subtitle : '',
           vendor: vendors.includes(String(value.model_vendor || '')) ? String(value.model_vendor) : '',
-          stitch: Boolean(value.stitch),
         }
       } catch (e) { return null }
     }
@@ -647,63 +713,6 @@ window.__ModuleLoader__.load({
 
     const DSH_MEDIA_MODEL = /(veo|seedance|happyhorse|gpt-image|nano-banana|(^|[-_.])wan(?:\d|[-_.])|image|video|t2v)/i
 
-    function dshTextModels(dsh) {
-      if (!dsh || !dsh.available) return []
-      const rows = []
-      for (const provider of dsh.providers || []) {
-        for (const model of provider.models || []) {
-          const id = String(model.id || '')
-          if (!id || DSH_MEDIA_MODEL.test(id)) continue
-          rows.push({
-            provider: provider.id,
-            providerName: provider.name || provider.id,
-            model: id,
-            name: model.name || id,
-          })
-        }
-      }
-      return rows
-    }
-
-    function defaultDshTextModel(dsh) {
-      const rows = dshTextModels(dsh)
-      if (!rows.length) return null
-      const selected = dsh && dsh.selection
-      if (selected && rows.some((row) => row.provider === selected.provider && row.model === selected.model)) {
-        return { provider: selected.provider, model: selected.model }
-      }
-      return { provider: rows[0].provider, model: rows[0].model }
-    }
-
-    function textModelKey(value) {
-      return value && value.provider && value.model ? value.provider + '|' + value.model : ''
-    }
-
-    function TextModelSelect({ dsh, value, onChange }) {
-      const rows = dshTextModels(dsh)
-      if (!rows.length) return null
-      const fallback = defaultDshTextModel(dsh)
-      const selected = value && rows.some((row) => row.provider === value.provider && row.model === value.model) ? value : fallback
-      const groups = new Map()
-      for (const row of rows) {
-        if (!groups.has(row.provider)) groups.set(row.provider, { name: row.providerName, rows: [] })
-        groups.get(row.provider).rows.push(row)
-      }
-      return h('label', { className: 'adp-text-model', title: 'DSH 文本模型（抽梗 / 脚本 / 润色）' },
-        h('span', null, '文本'),
-        h('select', {
-          className: 'adp-select',
-          value: textModelKey(selected),
-          onChange: (e) => {
-            const [provider, model] = String(e.currentTarget.value).split('|')
-            onChange({ provider, model })
-          },
-        }, Array.from(groups.entries()).map(([provider, group]) => h('optgroup', { key: provider, label: group.name },
-          group.rows.map((row) => h('option', { key: row.model, value: textModelKey(row) }, row.name))
-        )))
-      )
-    }
-
     function UploadSlot({ label, asset, kind, onAsset }) {
       const ref = useRef(null)
       const [busy, setBusy] = useState(false)
@@ -757,12 +766,116 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DropVideo({ asset, onAsset }) {
+    function dshTextModels(dsh) {
+      if (!dsh || !dsh.available) return []
+      const rows = []
+      for (const provider of dsh.providers || []) {
+        for (const model of provider.models || []) {
+          rows.push({ provider: provider.id, providerName: provider.name || provider.id, model: model.id, name: model.name || model.id })
+        }
+      }
+      return rows
+    }
+
+    function defaultDshTextModel(dsh) {
+      const rows = dshTextModels(dsh)
+      if (!rows.length) return null
+      const selected = dsh && dsh.selection
+      if (selected && rows.some((row) => row.provider === selected.provider && row.model === selected.model)) {
+        return { provider: selected.provider, model: selected.model }
+      }
+      return { provider: rows[0].provider, model: rows[0].model }
+    }
+
+    function textModelKey(value) {
+      return value && value.provider && value.model ? value.provider + '|' + value.model : ''
+    }
+
+    function TextModelSelect({ dsh, value, onChange }) {
+      const rows = dshTextModels(dsh)
+      const [open, setOpen] = useState(false)
+      const rootRef = useRef(null)
+      useEffect(() => {
+        if (!open) return
+        const onDown = (event) => { if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false) }
+        const onKey = (event) => { if (event.key === 'Escape') setOpen(false) }
+        document.addEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('mousedown', onDown)
+          document.removeEventListener('keydown', onKey)
+        }
+      }, [open])
+      if (!rows.length) return null
+      const fallback = defaultDshTextModel(dsh)
+      const selected = value && rows.some((row) => row.provider === value.provider && row.model === value.model) ? value : fallback
+      const selectedRow = rows.find((row) => row.provider === selected.provider && row.model === selected.model) || rows[0]
+      const groups = new Map()
+      for (const row of rows) {
+        if (!groups.has(row.provider)) groups.set(row.provider, { name: row.providerName, rows: [] })
+        groups.get(row.provider).rows.push(row)
+      }
+      return h('div', { className: 'adp-model-picker', ref: rootRef },
+        h('button', {
+          type: 'button',
+          className: 'adp-model-trigger',
+          title: '选择对话模型',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open,
+          onClick: () => setOpen((prev) => !prev),
+        },
+          h('i', { className: 'adp-agent-icon', 'aria-hidden': 'true', title: '智能体' }, '✦'),
+          h('span', { className: 'adp-model-name' }, selectedRow.name),
+          h('span', { className: 'adp-model-caret', 'aria-hidden': 'true' },
+            h('svg', { width: 12, height: 12, viewBox: '0 0 12 12' },
+              h('path', { d: 'M3 4.5 6 7.5 9 4.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })
+            )
+          )
+        ),
+        open ? h('div', { className: 'adp-model-menu', role: 'listbox' },
+          Array.from(groups.entries()).map(([provider, group]) => h('div', { key: provider, className: 'adp-model-group' },
+            h('div', { className: 'adp-model-group-label' }, group.name),
+            group.rows.map((row) => h('button', {
+              key: row.model,
+              type: 'button',
+              role: 'option',
+              'aria-selected': row.provider === selected.provider && row.model === selected.model,
+              className: 'adp-model-option' + (row.provider === selected.provider && row.model === selected.model ? ' on' : ''),
+              onClick: () => { onChange({ provider: row.provider, model: row.model }); setOpen(false) },
+            }, h('span', null, row.name), row.provider === selected.provider && row.model === selected.model ? h('span', { className: 'adp-model-check' }, '✓') : null))
+          ))
+        ) : null
+      )
+    }
+
+    function PreviewModal({ asset, onClose }) {
+      useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose() }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [onClose])
+      if (!asset) return null
+      const video = asset.kind === 'video' || /\.(mp4|mov|webm|m4v)$/i.test(String(asset.path || ''))
+      return h('div', { className: 'adp-preview-backdrop', onClick: onClose },
+        h('div', { className: 'adp-preview', role: 'dialog', 'aria-modal': 'true', 'aria-label': '素材预览', onClick: (e) => e.stopPropagation() },
+          h('div', { className: 'adp-preview-head' },
+            h('span', { className: 'adp-preview-name', title: asset.name || '' }, asset.name || '素材预览'),
+            h('button', { className: 'adp-icon-btn', onClick: onClose, title: '关闭预览' }, '×')
+          ),
+          video
+            ? h('video', { className: 'adp-preview-video', src: mediaUrl(asset.path), controls: true, autoPlay: true, playsInline: true })
+            : h('img', { className: 'adp-preview-img', src: mediaUrl(asset.path), alt: asset.name || '素材预览' })
+        )
+      )
+    }
+
+    function DropVideo({ asset, onAsset, onPreview }) {
       const input = useRef(null)
       const [busy, setBusy] = useState(false)
       const [drag, setDrag] = useState(false)
       const [err, setErr] = useState('')
       const choose = () => { if (!busy) input.current && input.current.click() }
+      const open = () => { if (asset && onPreview) onPreview(asset); else choose() }
       const take = async (file) => {
         if (!file) return
         setBusy(true); setErr('')
@@ -770,15 +883,15 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'adp-col' },
         h('div', {
-          className: 'adp-drop' + (drag ? ' drag' : ''),
-          onClick: choose,
+          className: 'adp-drop' + (drag ? ' drag' : '') + (asset ? ' has-preview' : ''),
+          onClick: open,
           role: 'button',
           tabIndex: 0,
-          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose() } },
+          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() } },
           onDragOver: (e) => { e.preventDefault(); setDrag(true) },
           onDragLeave: () => setDrag(false),
           onDrop: (e) => { e.preventDefault(); setDrag(false); take(e.dataTransfer.files && e.dataTransfer.files[0]) },
-          title: asset ? '点击替换参考视频' : '点击或拖入参考视频',
+          title: asset ? '点击预览参考视频；用「替换」换片' : '点击或拖入参考视频',
         },
           asset ? h('video', { src: mediaUrl(asset.path), muted: true, playsInline: true }) : h('div', { className: 'adp-drop-empty' },
             h('b', null, busy ? '上传中…' : '拖入参考视频'),
@@ -786,7 +899,10 @@ window.__ModuleLoader__.load({
           ),
           asset ? h('div', { className: 'adp-drop-overlay' },
             h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, asset.name),
-            h('button', { className: 'adp-remove', onClick: (e) => { e.stopPropagation(); onAsset(null) }, title: '移除' }, '×')
+            h('span', { className: 'adp-drop-actions' },
+              h('button', { className: 'adp-btn ghost adp-drop-action', onClick: (e) => { e.stopPropagation(); choose() }, title: '替换参考视频' }, '替换'),
+              h('button', { className: 'adp-remove', onClick: (e) => { e.stopPropagation(); onAsset(null) }, title: '移除' }, '×')
+            )
           ) : null
         ),
         h('input', { ref: input, type: 'file', accept: 'video/*', style: { display: 'none' }, onChange: (e) => { take(e.currentTarget.files && e.currentTarget.files[0]); e.currentTarget.value = '' } }),
@@ -794,7 +910,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MediaGrid({ assets, onAdd, onRemove, max = 9 }) {
+    function MediaGrid({ assets, onAdd, onRemove, onPreview, max = 9 }) {
       const input = useRef(null)
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
@@ -810,9 +926,17 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'adp-col' },
         h('div', { className: 'adp-media-grid' },
-          (assets || []).map((asset) => h('div', { className: 'adp-media', key: asset.id, title: asset.name },
+          (assets || []).map((asset) => h('div', {
+            className: 'adp-media' + (onPreview ? ' has-preview' : ''),
+            key: asset.id,
+            title: asset.name + ' · 点击预览',
+            role: onPreview ? 'button' : undefined,
+            tabIndex: onPreview ? 0 : undefined,
+            onClick: onPreview ? () => onPreview(asset) : undefined,
+            onKeyDown: onPreview ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPreview(asset) } } : undefined,
+          },
             h('img', { src: mediaUrl(asset.path), alt: asset.name }),
-            h('button', { className: 'adp-remove', onClick: () => onRemove(asset.id), title: '移除' }, '×')
+            h('button', { className: 'adp-remove', onClick: (e) => { e.stopPropagation(); onRemove(asset.id) }, title: '移除' }, '×')
           )),
           (assets || []).length < max ? h('button', { className: 'adp-media-add', onClick: () => input.current && input.current.click(), disabled: busy, title: '添加商品图' },
             h('b', null, busy ? '…' : '+'),
@@ -835,7 +959,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AdvancedRow({ value, onChange, models, needsDialogue }) {
+    function AdvancedRow({ value, onChange, models, needsDialogue, autoModel, autoTiming, timingNote, aspectNote }) {
       const v = value || {}
       const set = (key, val) => onChange(Object.assign({}, v, { [key]: val }))
       const usableModels = (models || []).filter(m => m.available && m.enabled !== false)
@@ -844,12 +968,18 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'adp-col', style: { gap: 9 } },
         h('div', { className: 'adp-field-grid g3' },
           h(FormSelect, { label: '模式', value: v.generation_mode || 'fast', onChange: (x) => set('generation_mode', x), options: [{ value: 'fast', label: '快速 · 整条' }, { value: 'fine', label: '精细 · 分段' }] }),
-          h(FormSelect, { label: '时长（秒）', value: v.duration || 12, onChange: (x) => set('duration', Number(x)), options: [5, 8, 10, 12, 15, 30] }),
-          h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] })
+          autoTiming
+            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '时长'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, timingNote || '跟随参考片'))
+            : h(FormSelect, { label: '时长（秒）', value: v.duration || 12, onChange: (x) => set('duration', Number(x)), options: [5, 8, 10, 12, 15, 30] }),
+          autoTiming
+            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '比例'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, aspectNote || '跟随参考片'))
+            : h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] })
         ),
         h('div', { className: 'adp-field-grid g3' },
           h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] }),
-          h(FormSelect, { label: '模型', value: currentModel, onChange: (x) => set('model', x), options: modelOptions }),
+          autoModel
+            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '模型'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, '自动选择（H3 完整复刻优先）'))
+            : h(FormSelect, { label: '模型', value: currentModel, onChange: (x) => set('model', x), options: modelOptions }),
           h(FormSelect, { label: '字幕', value: v.subtitle || 'off', onChange: (x) => set('subtitle', x), options: [{ value: 'off', label: '不启用' }, { value: 'sidecar', label: 'SRT 旁挂' }] })
         )
       )
@@ -906,6 +1036,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'adp-result-badges' }, h(StatusBadge, { status: run.status }), h(Badge, { status: 'ok' }, '图片'))
         ),
         run.error ? h('div', { className: 'adp-result-error' }, run.error) : null,
+        (result.warnings || []).length ? h('div', { className: 'adp-notice', style: { marginBottom: 10 } }, result.warnings.join('；')) : null,
         h('div', { className: 'adp-image-grid' },
           h('div', { className: 'adp-image-stage' }, result.image ? h('img', { src: mediaUrl(result.image), alt: result.prompt || 'generated image' }) : h('div', { className: 'adp-empty-stage' }, run.status === 'running' ? '正在生成图片…' : '还没有图片')),
           h('aside', { className: 'adp-result-side' },
@@ -943,6 +1074,7 @@ window.__ModuleLoader__.load({
 
     function VideoResultPanel({ run, onChanged, onBack, assets }) {
       const [storyboard, setStoryboard] = useState([])
+      const [analysis, setAnalysis] = useState(null)
       const [selected, setSelected] = useState(null)
       const [msg, setMsg] = useState('')
       const [chat, setChat] = useState([])
@@ -961,12 +1093,13 @@ window.__ModuleLoader__.load({
       const video = result.video ? mediaUrlVersion(result.video, run.version) : ''
       const qa = result.qa
       const postOnly = changes.length > 0 && changes.every((c) => c.stage === 'post')
+      const h3Mode = (run.selection || {}).mode === 'h3_reference'
       const running = run.status === 'running' || run.status === 'queued'
       const editDirty = edit.aspect !== (adv.aspect || '9:16') || edit.resolution !== (adv.resolution || '720p') || Number(edit.duration) !== Number(adv.duration || 12)
       const hasEdits = (run.segment_edits || []).length > 0
 
       useEffect(() => {
-        setStoryboard([]); setSelected(null); setChat([]); setChanges([]); setBusy(''); setErr(''); setEditOpen(false)
+        setStoryboard([]); setAnalysis(null); setSelected(null); setChat([]); setChanges([]); setBusy(''); setErr(''); setEditOpen(false)
         setEdit({ aspect: adv.aspect || '9:16', resolution: adv.resolution || '720p', duration: adv.duration || 12 })
       }, [run.id])
 
@@ -978,7 +1111,13 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
       }, [run.id])
 
-      useEffect(() => { if (run.status === 'succeeded') void loadSb() }, [run.status, loadSb])
+      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video)) void loadSb() }, [run.status, run.result, loadSb])
+
+      const loadAnalysis = useCallback(async () => {
+        if (run.scenario !== 'viral-remake') return
+        try { setAnalysis(await api('/runs/' + run.id + '/analysis')) } catch { setAnalysis(null) }
+      }, [run.id, run.scenario])
+      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video)) void loadAnalysis() }, [run.status, run.result, loadAnalysis])
 
       const openEdit = () => {
         setEdit({ aspect: adv.aspect || '9:16', resolution: adv.resolution || '720p', duration: adv.duration || 12 })
@@ -1058,12 +1197,16 @@ window.__ModuleLoader__.load({
         try { await navigator.clipboard.writeText(brief) } catch (e) { setErr('复制失败：' + String(e.message || e)) }
       }
 
+      const selection = run.selection || {}
+      const selectionLabel = { h3_reference: 'H3 完整复刻', reference_fallback: '参考生成', generation_fallback: '生成兜底', analysis_only: '仅拆解' }[selection.mode] || selection.mode || '自动'
       const facts = [
         ['版本', 'v' + (run.version || 1)],
-        ['画幅', adv.aspect || '9:16'],
+        ['画幅', selection.source_aspect || adv.aspect || '9:16'],
         ['清晰度', adv.resolution || '720p'],
         ['时长', result.duration_s ? fmt(result.duration_s) : (adv.duration ? adv.duration + 's' : '—')],
-        ['模型', result.model || adv.model || 'auto'],
+        ['模型', result.model || selection.model || adv.model || 'auto'],
+        ['复刻', selectionLabel],
+        ['口播', result.audio_source === 'reference' ? '参考片原声' : result.audio_source === 'h3' ? 'H3 新生成' : '—'],
       ]
       const qaPass = (qa && qa.summary && qa.summary.pass) || 0
       const qaTotal = (qa && qa.checks && qa.checks.length) || 0
@@ -1139,6 +1282,24 @@ window.__ModuleLoader__.load({
             )
           )
         ),
+        analysis && analysis.available ? h('section', { className: 'adp-inputs' },
+          h('div', { className: 'adp-inputs-head' },
+            h('div', { className: 'adp-h2' }, '参考片拆解'),
+            h('span', { className: 'adp-storyboard-meta' }, (analysis.analysis && analysis.analysis.mode === 'frames' ? '视频帧分析' : '启发式拆解') + ((analysis.analysis && analysis.analysis.model) ? ' · ' + analysis.analysis.model : '') + ((analysis.analysis && analysis.analysis.degraded) ? ' · 降级' : ''))
+          ),
+          h('div', { className: 'adp-col', style: { padding: '0 14px 14px', gap: 8 } },
+            ((analysis.remake_plan || {}).shots || []).map((shot) => h('div', { key: shot.id, className: 'adp-shot', style: { padding: '9px 10px' } },
+              h('div', { className: 'adp-shot-top' },
+                h('b', null, (shot.camera && shot.camera.shot_size) || '镜头'),
+                h('span', { className: 'adp-shot-time' }, fmtAt(shot.start_s) + '–' + fmtAt(shot.end_s))
+              ),
+              h('div', { className: 'adp-shot-dialogue' }, shot.action || '—'),
+              h('div', { className: 'adp-shot-action' }, [shot.scene, (shot.product || {}).name, (shot.cast || []).map((x) => x.description).filter(Boolean).join('、')].filter(Boolean).join(' · ') || '—'),
+              (shot.dialogue || []).length ? h('div', { className: 'adp-small adp-muted' }, shot.dialogue.join(' / ')) : null
+            )),
+            (analysis.analysis && analysis.analysis.reason) ? h('div', { className: 'adp-small adp-muted' }, analysis.analysis.reason) : null
+          )
+        ) : null,
         h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '分镜'),
@@ -1161,13 +1322,14 @@ window.__ModuleLoader__.load({
             ),
             h('button', { className: 'adp-shot-edit', onClick: () => selectSegment(seg), 'aria-expanded': selected && selected.id === seg.id, title: '编辑这一镜' }, h(Glyph, { name: 'edit' }), h('span', null, selected && selected.id === seg.id ? '收起' : '编辑')),
             selected && selected.id === seg.id ? h('div', { className: 'adp-shot-editor' },
-              h('div', { className: 'adp-shot-editor-head' }, '分镜助手 · #' + (seg.index + 1) + ' · ' + fmtAt(seg.start_s) + '–' + fmtAt(seg.end_s)),
+              h('div', { className: 'adp-shot-editor-head' }, '分镜助手 · #' + (seg.index + 1) + ' · ' + fmtAt(seg.start_s) + '–' + fmtAt(seg.end_s) + (h3Mode ? ' · H3 整条重生成' : '')),
+              h3Mode ? h('div', { className: 'adp-small adp-muted' }, 'H3 是整条参考复刻，提交后会生成新版本并重跑整条，父版本不受影响。') : null,
               chat.length ? h('div', { className: 'adp-chat' }, chat.map((m, i) => h('div', { key: i, className: 'adp-msg ' + (m.role === 'user' ? 'user' : '') }, m.text))) : h('div', { className: 'adp-small adp-muted' }, '直接说这一镜要改什么，例如：人物更近、把价格说出来、结尾加抢购动作。'),
               changes.length ? h('div', { className: 'adp-col' }, changes.map((c, i) => h('div', { key: i, className: 'adp-change' }, (c.label || c.field) + '：' + JSON.stringify(c.from) + ' → ' + JSON.stringify(c.to) + (c.stage === 'generate' ? ' · 需要重生成' : ' · 后期')))) : null,
               h('div', { className: 'adp-row adp-shot-chat-row' },
                 h('input', { className: 'adp-input adp-grow', value: msg, placeholder: '这一镜改成…', onChange: (e) => setMsg(e.currentTarget.value), onKeyDown: (e) => { if (e.key === 'Enter') send() } }),
                 h('button', { className: 'adp-btn primary', onClick: send, disabled: busy === 'chat' }, '发送'),
-                changes.length ? h('button', { className: 'adp-btn', onClick: applyChanges, disabled: busy === 'apply' }, postOnly ? '只应用后期修改' : '应用到这一镜') : null
+                changes.length ? h('button', { className: 'adp-btn', onClick: applyChanges, disabled: busy === 'apply' }, postOnly ? '只应用后期修改' : (h3Mode ? '整条重新生成（H3）' : '应用到这一镜')) : null
               )
             ) : null
           )) : h('div', { className: 'adp-empty-shots' },
@@ -1176,6 +1338,7 @@ window.__ModuleLoader__.load({
           )
         ),
         err ? h('div', { className: 'adp-result-error' }, err) : null,
+        run.last_edit_error ? h('div', { className: 'adp-result-error', style: { color: '#C99B54' } }, '上次单镜编辑失败：' + String(run.last_edit_error).slice(0, 300) + '（原成片未受影响）') : null,
         editOpen ? h('div', { className: 'adp-drawer-backdrop', onClick: () => setEditOpen(false) },
           h('div', { className: 'adp-drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': '修改生成参数', onClick: (e) => e.stopPropagation() },
             h('div', { className: 'adp-drawer-head' },
@@ -1197,20 +1360,24 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function RecreateTab({ models, dsh, onStarted, personas, onRefreshPersonas }) {
+    function RecreateTab({ models, onStarted, personas, onRefreshPersonas }) {
       const [refAsset, setRefAsset] = useState(null)
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
-      const [textModel, setTextModel] = useState(null)
       const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 12, aspect: '9:16', resolution: '720p', model: '' })
+      const [replaceScope, setReplaceScope] = useState('both')
+      const [personScope, setPersonScope] = useState('main')
+      const [audioMode, setAudioMode] = useState('regenerate')
+      const preserveAllowed = replaceScope === 'person'
+      useEffect(() => { if (!preserveAllowed && audioMode === 'preserve') setAudioMode('regenerate') }, [preserveAllowed, audioMode])
       const [touched, setTouched] = useState({})
-      const [detected, setDetected] = useState(() => Object.assign(detectVideoParams(''), { stitch: false }))
+      const [detected, setDetected] = useState(() => detectVideoParams(''))
+      const [preview, setPreview] = useState(null)
       const [persona, setPersona] = useState({ gender: 'any', age: 'youth', body_type: 'standard', ethnicity: 'asian' })
       const [personaEnabled, setPersonaEnabled] = useState(false)
       const [personaId, setPersonaId] = useState('')
       const [busy, setBusy] = useState(false)
       const [personaBusy, setPersonaBusy] = useState(false)
-      const [polishBusy, setPolishBusy] = useState(false)
       const [err, setErr] = useState('')
       const usableModels = (models || []).filter((m) => m.available && m.enabled !== false)
       const hasRealModel = usableModels.length > 0
@@ -1224,10 +1391,8 @@ window.__ModuleLoader__.load({
           return pick ? Object.assign({}, prev, { model: pick }) : prev
         })
       }, [models])
-      const selectedTextModel = textModel || defaultDshTextModel(dsh)
       const selectedPersona = (personas || []).find((p) => p.id === personaId)
-      const dshReady = Boolean(dsh && dsh.available && (dsh.providers || []).length)
-      useEffect(() => { setDetected(Object.assign(detectVideoParams(brief), { stitch: /(拼接|拼起来|拼成|接起来|接到一起|合并|组合|连起来|插入|顺序拼|前后拼)/.test(brief) })) }, [brief])
+      useEffect(() => { setDetected(detectVideoParams(brief)) }, [brief])
       const changeAdvanced = (next) => {
         const changed = {}
         for (const key of ['aspect', 'duration', 'resolution', 'generation_mode', 'subtitle']) {
@@ -1258,7 +1423,7 @@ window.__ModuleLoader__.load({
         setBusy(true); setErr('')
         try {
           let smart = null
-          try { smart = await parseIntentWithDsh(brief, selectedTextModel) } catch { smart = null }
+          try { smart = await parseIntentWithDsh(brief) } catch { smart = null }
           const next = Object.assign(detectVideoParams(brief))
           if (smart) {
             if (smart.aspect) next.aspect = smart.aspect
@@ -1277,38 +1442,21 @@ window.__ModuleLoader__.load({
           if (next.subtitle) merged.subtitle = next.subtitle
           const vendorModel = modelForVendor(next.vendor, models)
           if (vendorModel) merged.model = vendorModel
-          if (selectedTextModel) merged.text_model = selectedTextModel
           const personaPayload = personaEnabled ? { persona, persona_map: personaId ? { A: personaId, B: personaId } : {} } : {}
           const data = await api('/runs', { method: 'POST', body: {
             scenario: 'viral-remake',
             inputs: { reference_asset_id: refAsset.id, product_asset_ids: products.map(p => p.id), brief },
-            advanced: Object.assign({}, merged, personaPayload),
+            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: replaceScope, person_scope: personScope, audio_mode: audioMode }, personaPayload),
           } })
           onStarted(data.run)
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
-      }
-      const polish = async () => {
-        if (!brief.trim()) { setErr('先写一点需求，再让 DSH 模型润色'); return }
-        setPolishBusy(true); setErr('')
-        try {
-          const data = await api('/dsh/chat', { method: 'POST', body: {
-            system: '你是广告视频导演。把运营的需求改写成更清楚的中文创作要求，保留价格、卖点、产品和修改意图；只输出改写后的需求文本，不要解释，不要加引号。',
-            messages: [{ role: 'user', content: [{ type: 'text', text: brief }] }],
-            maxTokens: 600,
-            provider: selectedTextModel && selectedTextModel.provider,
-            model: selectedTextModel && selectedTextModel.model,
-          } })
-          const text = data.dsh && data.dsh.text
-          if (text) setBrief(String(text).trim().slice(0, 2000))
-          else setErr('DSH 模型没有返回文本')
-        } catch (e) { setErr('DSH 模型暂不可用：' + String(e.message || e)) } finally { setPolishBusy(false) }
       }
       return h('div', { className: 'adp-page' },
         h('div', { className: 'adp-page-head' },
           h('div', null,
             h('div', { className: 'adp-eyebrow' }, 'SCENE 01 / VIRAL REMAKE'),
             h('h1', { className: 'adp-title' }, '爆款复刻'),
-            h('p', { className: 'adp-lede' }, '把一条已验证的片子拆成结构和梗，换成你的商品、人物和台词。先给素材，再写要求，剩下的交给后台。')
+            h('p', { className: 'adp-lede' }, '上传一条参考片，AI 自动拆解镜头、场景、动作、节奏和声音；只替换你指定的人物/商品，需要改口播或场景时直接写进需求。')
           ),
           h('div', { className: 'adp-page-meta' },
             h(Badge, { status: hasRealModel ? 'ok' : 'bad' }, hasRealModel ? '模型已就绪' : '未配置模型'),
@@ -1324,12 +1472,12 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'adp-section-note' }, '参考片决定结构')
               ),
               h('div', { className: 'adp-label' }, h('span', null, '参考视频'), h('span', { className: 'count' }, '必填')),
-              h(DropVideo, { asset: refAsset, onAsset: setRefAsset }),
+              h(DropVideo, { asset: refAsset, onAsset: setRefAsset, onPreview: setPreview }),
               h('div', { className: 'adp-label', style: { marginTop: 16 } },
                 h('span', null, '商品图'),
                 h('span', { className: 'count' }, (products.length || 0) + ' / 9')
               ),
-              h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)) }),
+              h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview }),
               h('div', { className: 'adp-hint' }, '可上传多张：正面、包装、细节、使用场景。第一张会作为主商品参考。'),
               h('div', { className: 'adp-asset-foot' },
                 h('b', null, '素材建议'),
@@ -1357,8 +1505,6 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'adp-brief-foot' },
                   h('span', null, '写产品、卖点、价格、想保留/想改的地方；要原样念的台词用「」括起来。'),
                   h('div', { className: 'adp-row', style: { gap: 8 } },
-                    h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
-                    dshReady ? h('button', { className: 'adp-btn', onClick: polish, disabled: polishBusy, title: '用 DSH 已配置模型润色需求' }, polishBusy ? '润色中…' : 'DSH 润色') : null,
                     h('span', { className: 'adp-key' }, '⌘ ↵ 开始')
                   )
                 )
@@ -1367,7 +1513,13 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'adp-step' }, '03'),
                 h('span', { className: 'adp-section-title' }, '生成设置')
               ),
-              h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models, needsDialogue: true }),
+              h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models, needsDialogue: true, autoModel: true, autoTiming: true, timingNote: refAsset && refAsset.duration_s ? '跟随参考片 · ' + Number(refAsset.duration_s).toFixed(1) + 's' : '自动解析参考片', aspectNote: refAsset && refAsset.width && refAsset.height ? '跟随参考片 · ' + (refAsset.height > refAsset.width * 1.15 ? '9:16' : refAsset.width > refAsset.height * 1.15 ? '16:9' : '1:1') : '自动解析参考片' }),
+              h('div', { className: 'adp-field-grid g3' },
+                h(FormSelect, { label: '替换内容', value: replaceScope, onChange: setReplaceScope, options: [{ value: 'both', label: '人物 + 商品' }, { value: 'product', label: '只换商品' }, { value: 'person', label: '只换人物' }] }),
+                h(FormSelect, { label: '人物范围', value: personScope, onChange: setPersonScope, options: [{ value: 'main', label: '只换主角' }, { value: 'all', label: '全部人物' }] }),
+                h(FormSelect, { label: '声音', value: audioMode, onChange: setAudioMode, options: preserveAllowed ? [{ value: 'regenerate', label: '按新台词生成' }, { value: 'preserve', label: '保留原声' }] : [{ value: 'regenerate', label: '按新台词生成' }] })
+              ),
+              h('div', { className: 'adp-hint' }, preserveAllowed ? '只换人物时可以保留原声；换商品会自动改为按新台词生成，避免旧产品名/旧价格残留在口播里。' : '换商品必须按新台词生成：参考片会去音轨后交给 H3，避免旧产品名/旧价格叠加。'),
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
               overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
               h('div', { className: 'adp-section-head' },
@@ -1408,7 +1560,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'adp-action-note' },
                   !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
                   h('br'),
-                  '开始后可在结果页看分镜、派生新版本或拼接。'
+                  '开始后可在结果页看分镜、派生新版本。'
                 ),
                 h('div', { className: 'adp-grow' }),
                 h('button', { className: 'adp-primary', onClick: start, disabled: busy || !refAsset },
@@ -1420,77 +1572,64 @@ window.__ModuleLoader__.load({
             )
           )
         ),
-        h('div', { className: 'adp-examples' },
-          h('div', { className: 'adp-section-head' },
-            h('span', { className: 'adp-step' }, '05'),
-            h('span', { className: 'adp-section-title' }, '示例'),
-            h('span', { className: 'adp-section-note' }, '点一下套用需求')
-          ),
-          h('div', { className: 'adp-example-grid' },
-            [
-              { tag: 'PRICE', title: '价格反差', text: '先报高价，再翻活动价', brief: '保留原片的比价、贬损和抢购结构；产品活动价 19.9，卖点是不油腻、追剧零食，台词更生活化。' },
-              { tag: 'TALK', title: '口播测评', text: '一个人讲三个卖点', brief: '一个人对着镜头讲三个卖点：口感、价格、使用场景；保留原片的节奏和结尾行动号召，不要夸张功效。' },
-              { tag: 'UNBOX', title: '开箱展示', text: '手部特写 + 商品细节', brief: '用开箱动作展示包装、分量和细节；中近景为主，最后把商品举到镜头前，台词简短。' },
-            ].map((ex) => h('button', { key: ex.tag, className: 'adp-example', onClick: () => setBrief(ex.brief) },
-              h('span', { className: 'tag' }, ex.tag),
-              h('b', null, ex.title),
-              h('span', null, ex.text)
-            ))
-          )
-        )
+        preview ? h(PreviewModal, { asset: preview, onClose: () => setPreview(null) }) : null
       )
     }
 
-    function TextTab({ models, dsh, imageModels, onStarted, assets, onRefreshAssets }) {
-      const [brief, setBrief] = useState('')
-      const [mode, setMode] = useState('video')
+    function TextTab({ dsh, onStarted, onRefreshAssets }) {
+      const [thread, setThread] = useState([])
+      const [composer, setComposer] = useState('')
+      const [images, setImages] = useState([])
       const [textModel, setTextModel] = useState(null)
-      const [files, setFiles] = useState([])
-      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 8, aspect: '9:16', resolution: '720p', model: '' })
-      const [showAdvanced, setShowAdvanced] = useState(false)
-      const [touched, setTouched] = useState({})
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
       const input = useRef(null)
-      const [detected, setDetected] = useState(() => Object.assign(detectVideoParams(''), { stitch: false }))
-      useEffect(() => { setDetected(Object.assign(detectVideoParams(brief), { stitch: /(拼接|拼起来|拼成|接起来|接到一起|合并|组合|连起来|插入|顺序拼|前后拼)/.test(brief) })) }, [brief])
-      const images = files.filter((f) => f.kind === 'image')
-      const videos = files.filter((f) => f.kind === 'video')
+      const scrollRef = useRef(null)
+      const composerRef = useRef(null)
       const selectedTextModel = textModel || defaultDshTextModel(dsh)
-      const stitchIntent = Boolean(detected.stitch)
-      const selectedModel = (models || []).find((m) => m.id === advanced.model)
-      const imageOnly = Boolean(selectedModel && !(selectedModel.capabilities || []).includes('text_to_video'))
+      const hasTextModel = Boolean(selectedTextModel)
+      const lastProposal = [...thread].reverse().find((message) => message.proposal)?.proposal || null
       useEffect(() => {
-        setAdvanced((prev) => {
-          const usable = (models || []).filter((m) => m.available && m.enabled !== false)
-          if (prev.model && usable.some((m) => m.id === prev.model)) return prev
-          const pick = defaultModelId(models, false)
-          return pick ? Object.assign({}, prev, { model: pick }) : prev
-        })
-      }, [models])
-      const modelOptions = (models || []).filter((m) => m.available && m.enabled !== false).map((m) => ({ value: m.id, label: m.label }))
-      const currentModel = modelOptions.some((o) => o.value === advanced.model) ? advanced.model : (modelOptions[0] ? modelOptions[0].value : '')
-      const detectedLabels = []
-      if (detected.aspect) detectedLabels.push(detected.aspect)
-      if (detected.duration) detectedLabels.push(detected.duration + 's')
-      if (detected.resolution) detectedLabels.push(detected.resolution)
-      if (detected.mode === 'fine') detectedLabels.push('精细')
-      // The brief wins: every parameter it names replaces the control value, and
-      // the list below says exactly what will change before the run starts.
-      const overrides = []
-      if (detected.aspect && detected.aspect !== advanced.aspect) overrides.push('比例 ' + detected.aspect + '（控件 ' + advanced.aspect + '）')
-      if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
-      if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
-      if (detected.mode && detected.mode !== advanced.generation_mode) overrides.push('模式 精细（控件 快速）')
-      if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
-      const changeAdvanced = (patch) => {
-        const next = Object.assign({}, advanced, patch)
-        const changed = {}
-        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode', 'subtitle']) {
-          if (next[key] !== advanced[key]) changed[key] = true
+        const el = scrollRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      }, [thread, busy])
+
+      const systemPrompt = [
+        '你是 AdClip 自由创作助手，和用户正常中文对话，帮助完善创意。',
+        '只有用户明确要求“生成图片/画一张图/生成视频/做一条视频”，或明确确认上一轮生成提案时，才返回 action=image 或 action=video。',
+        '普通聊天、问候、提问、改文案、讨论方案、信息不足时，必须 action=none；不要主动提议生成，也不要把每段对话都变成生成计划。',
+        '生成图片默认 1:1、2K；生成视频默认 9:16、8 秒、720p；用户指定格式时按用户值。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释 JSON 本身：',
+        '{"reply":"给用户看的中文回复","action":"none|image|video","prompt":"生成用的完整画面描述","aspect":"9:16|16:9|1:1|4:3|3:4|21:9","duration":8,"resolution":"720p","area":"2K"}',
+        'action=none 时 prompt 可以为空；action=image/video 时 prompt 必须完整，不能只写“生成”。',
+      ].join('\n')
+
+      const parseReply = (raw) => {
+        const text = String(raw || '').trim()
+        if (!text) return { reply: '模型没有返回内容。', action: 'none' }
+        const start = text.indexOf('{')
+        const end = text.lastIndexOf('}')
+        if (start >= 0 && end > start) {
+          try {
+            const value = JSON.parse(text.slice(start, end + 1))
+            const action = ['image', 'video'].includes(String(value.action)) ? String(value.action) : 'none'
+            const aspects = ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9']
+            const resolutions = ['480p', '720p', '1080p']
+            const reply = String(value.reply || '').trim()
+            const prompt = String(value.prompt || '').trim()
+            const duration = Number(value.duration)
+            return {
+              reply: reply || (prompt ? '我整理好了，确认后就开始生成。' : '请再具体描述一下你想做的内容。'),
+              action: action !== 'none' && prompt ? action : 'none',
+              prompt,
+              aspect: aspects.includes(String(value.aspect)) ? String(value.aspect) : (action === 'image' ? '1:1' : '9:16'),
+              duration: Number.isFinite(duration) && duration >= 1 && duration <= 30 ? Math.round(duration) : 8,
+              resolution: resolutions.includes(String(value.resolution).toLowerCase()) ? String(value.resolution).toLowerCase() : '720p',
+              area: String(value.area || '2K'),
+            }
+          } catch { /* fall through to plain text */ }
         }
-        if (Object.keys(changed).length) setTouched((prev) => Object.assign({}, prev, changed))
-        setAdvanced(next)
+        return { reply: text, action: 'none' }
       }
 
       const upload = async (event) => {
@@ -1499,222 +1638,156 @@ window.__ModuleLoader__.load({
         if (!picked.length) return
         setBusy(true); setErr('')
         try {
-          const next = files.slice()
+          const next = images.slice()
           for (const file of picked) {
-            if (next.length >= 9) break
-            const kind = file.type.startsWith('video') ? 'video' : 'image'
-            next.push(await uploadFile(file, kind))
+            if (!file.type.startsWith('image/')) { setErr('自由创作只接收图片附件'); continue }
+            if (next.length >= 4) break
+            next.push(await uploadFile(file, 'image'))
           }
-          setFiles(next)
-          onRefreshAssets && onRefreshAssets()
+          setImages(next)
+          onRefreshAssets && await onRefreshAssets()
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
-      const remove = (id) => setFiles((prev) => prev.filter((f) => f.id !== id))
-      const start = async () => {
-        if (!brief.trim()) { setErr('先描述你想生成或拼接什么'); return }
+      const removeImage = (id) => setImages((prev) => prev.filter((x) => x.id !== id))
+
+      const generate = async (proposal) => {
+        if (!proposal || !proposal.prompt) { setErr('生成内容为空'); return }
         setBusy(true); setErr('')
         try {
-          let smart = null
-          try { smart = await parseIntentWithDsh(brief, selectedTextModel) } catch { smart = null }
-          const next = Object.assign(detectVideoParams(brief))
-          if (smart) {
-            if (smart.aspect) next.aspect = smart.aspect
-            if (smart.duration) next.duration = smart.duration
-            if (smart.resolution) next.resolution = smart.resolution
-            if (smart.mode) next.mode = smart.mode
-            if (smart.subtitle) next.subtitle = smart.subtitle
-            if (smart.vendor) next.vendor = smart.vendor
-          }
-          next.stitch = Boolean((smart && smart.stitch) || detected.stitch || /(拼接|拼起来|拼成|接起来|接到一起|合并|组合|连起来|插入|顺序拼|前后拼)/.test(brief))
-          setDetected(next)
-          const merged = Object.assign({}, advanced)
-          if (next.aspect) merged.aspect = next.aspect
-          if (next.duration) merged.duration = next.duration
-          if (next.resolution) merged.resolution = next.resolution
-          if (next.mode) merged.generation_mode = next.mode
-          if (next.subtitle) merged.subtitle = next.subtitle
-          const vendorModel = modelForVendor(next.vendor, models)
-          if (vendorModel) merged.model = vendorModel
-          if (next.stitch) {
-            if (videos.length < 2) { setErr('要拼接请至少上传两段视频'); return }
-            const data = await api('/stitch', { method: 'POST', body: {
-              clips: videos.map((v) => ({ asset_id: v.id, in_s: 0 })),
-              output: { aspect: merged.aspect, resolution: merged.resolution },
-              fit: 'blur_pad', transition: 'cut', audio: 'keep',
+          if (proposal.kind === 'image') {
+            const data = await api('/images', { method: 'POST', body: {
+              prompt: proposal.prompt,
+              aspect: proposal.aspect || '1:1',
+              area: proposal.area || '2K',
+              reference_asset_id: images[0] ? images[0].id : '',
             } })
-            onStarted(data.run); onRefreshAssets && onRefreshAssets()
-            return
+            onStarted(data.run)
+          } else {
+            const data = await api('/runs', { method: 'POST', body: {
+              scenario: 'text-to-video',
+              inputs: { brief: proposal.prompt, reference_image_asset_id: images[0] ? images[0].id : null },
+              advanced: { aspect: proposal.aspect || '9:16', duration: proposal.duration || 8, resolution: proposal.resolution || '720p', model: 'auto' },
+            } })
+            onStarted(data.run)
           }
-          if (videos.length) { setErr('视频附件用于拼接；如果要生成新视频，请只保留图片附件，或用文字说明“拼接这些视频”'); return }
-          if (imageOnly && !images.length) { setErr('当前模型是图生视频，请先上传一张参考图'); return }
-          const data = await api('/runs', { method: 'POST', body: {
-            scenario: 'text-to-video',
-            inputs: { brief, reference_image_asset_id: images[0] ? images[0].id : null },
-            advanced: merged,
-          } })
-          onStarted(data.run)
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
 
-      const imageAvailable = (imageModels || []).some((m) => m.available)
-      const modeTabs = h('div', { className: 'adp-create-tabs' },
-        h('button', { className: 'adp-create-tab' + (mode === 'video' ? ' on' : ''), onClick: () => setMode('video') }, '文生视频'),
-        h('button', { className: 'adp-create-tab' + (mode === 'image' ? ' on' : ''), disabled: !imageAvailable, title: imageAvailable ? '用文字生成图片' : '先在设置里配置图片模型厂商 key', onClick: () => imageAvailable && setMode('image') }, '文生图片', !imageAvailable ? h('span', { className: 'adp-create-tab-note' }, '未配置图片模型') : null)
-      )
-      const pageHead = h('div', { className: 'adp-page-head' },
-        h('div', null,
-          h('div', { className: 'adp-eyebrow' }, 'FREE CREATE'),
-          h('h1', { className: 'adp-title' }, '自由创作'),
-          h('p', { className: 'adp-lede adp-nowrap', title: '文生视频出成片；文生图片出商品图。参数可直接写在描述里。' }, '文生视频出成片；文生图片出商品图。参数可直接写在描述里。')
-        )
-      )
-      if (mode === 'image') {
-        return h('div', { className: 'adp-page' }, pageHead, modeTabs, h(ImagePanel, { imageModels, onStarted, onRefreshAssets }))
+      const send = async () => {
+        const text = composer.trim()
+        if (!text) { setErr('先输入一句话'); return }
+        if (/^(生成|开始|确认|就这个|按这个生成|可以了|好的)$/.test(text) && lastProposal) {
+          setComposer('')
+          await generate(lastProposal)
+          return
+        }
+        if (!hasTextModel) { setErr('先在 DSH 配置一个文本模型'); return }
+        const nextThread = thread.concat([{ role: 'user', text }])
+        setThread(nextThread)
+        setComposer('')
+        setBusy(true); setErr('')
+        try {
+          const messages = nextThread.slice(-10).map((message) => ({
+            role: message.role,
+            content: [{ type: 'text', text: String(message.text || '').slice(0, 1200) }],
+          }))
+          const data = await api('/dsh/chat', { method: 'POST', body: {
+            system: systemPrompt,
+            messages,
+            maxTokens: 900,
+            provider: selectedTextModel && selectedTextModel.provider,
+            model: selectedTextModel && selectedTextModel.model,
+          } })
+          const raw = String((data.dsh && data.dsh.text) || '')
+          const parsed = parseReply(raw)
+          const proposal = parsed.action !== 'none' && parsed.prompt ? {
+            kind: parsed.action,
+            prompt: parsed.prompt,
+            aspect: parsed.aspect,
+            duration: parsed.duration,
+            resolution: parsed.resolution,
+            area: parsed.area,
+          } : null
+          setThread((prev) => prev.concat([{ role: 'assistant', text: parsed.reply, proposal }]))
+          if (/拼接|拼起来|拼成|接起来|合并|组合|连起来/.test(text)) {
+            setThread((prev) => prev.concat([{ role: 'assistant', text: '拼接不在自由创作页处理；需要拼接时请通过 DSH 的拼接工具完成。' }]))
+          }
+        } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
-      return h('div', { className: 'adp-page' },
-        pageHead,
-        modeTabs,
-        h('div', { className: 'adp-composer' },
-          h('div', { className: 'adp-composer-head' },
-            h('span', { className: 'adp-composer-label' }, '描述'),
-            h('span', { className: 'adp-composer-count' }, brief.length + ' / 1000')
+
+      return h('div', { className: 'adp-page adp-chatpage' },
+        h('div', { className: 'adp-chat-head' },
+          h('div', { className: 'adp-chat-title' },
+            h('div', { className: 'adp-eyebrow' }, 'FREE CREATE'),
+            h('h1', { className: 'adp-title' }, '自由创作'),
+            h('p', { className: 'adp-lede', title: '聊天、问方案，或让我生成图片和视频；只在明确要求时生成，模型由后台自动选择。' }, '聊天、问方案，或让我生成图片和视频；只在明确要求时生成，模型由后台自动选择。')
+          )
+        ),
+        h('div', { className: 'adp-chat-main' },
+          h('div', { className: 'adp-chat-scroll' + (thread.length ? '' : ' empty'), ref: scrollRef },
+            thread.length
+              ? thread.map((message, index) => h('div', { key: index, className: 'adp-msg ' + (message.role === 'user' ? 'user' : '') },
+                h('div', null, message.text),
+                message.proposal ? h('div', { className: 'adp-plan' },
+                  h('div', { className: 'adp-plan-row' }, h('span', null, '类型'), h('b', null, message.proposal.kind === 'image' ? '图片' : '视频')),
+                  message.proposal.kind === 'image'
+                    ? h('div', { className: 'adp-plan-row' }, h('span', null, '尺寸'), h('b', null, message.proposal.aspect + ' · ' + message.proposal.area))
+                    : h('div', { className: 'adp-plan-row' }, h('span', null, '规格'), h('b', null, message.proposal.aspect + ' · ' + message.proposal.duration + ' 秒 · ' + message.proposal.resolution)),
+                  h('div', { className: 'adp-plan-brief' }, message.proposal.prompt),
+                  h('button', { className: 'adp-btn primary adp-plan-confirm', onClick: () => generate(message.proposal), disabled: busy }, busy ? '提交中…' : (message.proposal.kind === 'image' ? '生成图片' : '生成视频'))
+                ) : null
+              ))
+              : h('div', { className: 'adp-chat-empty' },
+                h('div', { className: 'adp-chat-empty-mark' }, '✦'),
+                h('h2', null, '今天想创作什么？'),
+                h('p', null, '可以聊天、问方案；明确说“画一张…”或“做一条…”时，我才会给出生成提案。'),
+                h('div', { className: 'adp-chat-suggestions' },
+                  ['画一张咖啡海报', '做一条 8 秒产品视频', '帮我写个广告脚本'].map((item) => h('button', {
+                    key: item,
+                    className: 'adp-suggestion',
+                    onClick: () => { setComposer(item); composerRef.current && composerRef.current.focus() },
+                  }, item))
+                )
+              )
           ),
-          h('textarea', {
-            className: 'adp-composer-input',
-            value: brief,
-            maxLength: 1000,
-            placeholder: '例如：竖屏 9:16，8 秒，一位 30 岁左右女性在明亮的厨房里展示一瓶饮料，中景，自然光；最后把产品举到镜头前。',
-            onChange: (e) => setBrief(e.currentTarget.value),
-          }),
-          h('div', { className: 'adp-attachments' },
-            files.map((file) => h('div', { key: file.id, className: 'adp-attach' },
-              file.kind === 'image'
-                ? h('img', { src: mediaUrl(file.path), alt: file.name })
-                : h('video', { src: mediaUrl(file.path), muted: true, playsInline: true }),
-              h('button', { className: 'adp-attach-remove', title: '移除', onClick: () => remove(file.id) }, '×'),
-              h('span', { className: 'adp-attach-kind' }, file.kind === 'video' ? '视频' : '图片')
-            )),
-            h('button', { className: 'adp-attach-add', onClick: () => input.current && input.current.click(), title: '添加图片或视频' },
-              h('b', null, '+'), h('span', null, '附件')
-            ),
-            h('input', { ref: input, type: 'file', accept: 'image/*,video/*', multiple: true, onChange: upload, style: { display: 'none' } })
-          ),
-          detectedLabels.length ? h('div', { className: 'adp-detected' }, h('span', null, '从描述识别'), detectedLabels.map((label) => h('span', { key: label, className: 'adp-detected-chip' }, label))) : null,
-          overrides.length ? h('div', { className: 'adp-conflict' }, h('b', null, '描述优先'), overrides.join('；')) : null,
-          h('div', { className: 'adp-composer-foot' },
-            h('div', { className: 'adp-row' },
-              h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
-              h('select', { className: 'adp-select adp-model-select', value: currentModel, onChange: (e) => setAdvanced(Object.assign({}, advanced, { model: e.currentTarget.value })) },
-                modelOptions.map((o) => h('option', { key: o.value, value: o.value }, o.label))
+          h('div', { className: 'adp-chat-composer' },
+            h('div', { className: 'adp-composer adp-create-composer' },
+              h('textarea', {
+                ref: composerRef,
+                className: 'adp-composer-input',
+                value: composer,
+                maxLength: 1000,
+                placeholder: '聊天、问方案，或明确说“画一张咖啡海报 / 做一条 8 秒咖啡视频”。',
+                onChange: (e) => setComposer(e.currentTarget.value),
+                onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } },
+              }),
+              h('div', { className: 'adp-attachments' },
+                images.map((file) => h('div', { key: file.id, className: 'adp-attach' },
+                  h('img', { src: mediaUrl(file.path), alt: file.name }),
+                  h('button', { className: 'adp-attach-remove', title: '移除', onClick: () => removeImage(file.id) }, '×'),
+                  h('span', { className: 'adp-attach-kind' }, '参考图')
+                )),
+                h('button', { className: 'adp-attach-add', onClick: () => input.current && input.current.click(), title: '添加参考图，可多选，最多 4 张' },
+                  h('b', null, '+'), h('span', null, '参考图'), h('small', null, '可多选')
+                ),
+                h('input', { ref: input, type: 'file', accept: 'image/*', multiple: true, onChange: upload, style: { display: 'none' } })
               ),
-              h('button', { className: 'adp-btn ghost', onClick: () => setShowAdvanced((v) => !v) }, showAdvanced ? '收起参数' : '参数'),
-              videos.length ? h('span', { className: 'adp-small adp-muted' }, videos.length + ' 段视频' + (stitchIntent ? ' · 将按顺序拼接' : ' · 说“拼接”才会拼接')) : null
-            ),
-            h('button', { className: 'adp-primary', onClick: start, disabled: busy },
-              busy ? '提交中…' : (stitchIntent && videos.length >= 2 ? '拼接生成' : '生成'),
-              h('span', { className: 'arrow' }, '→')
+              h('div', { className: 'adp-composer-foot' },
+                h('div', { className: 'adp-composer-left' },
+                  h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
+                  !hasTextModel ? h('span', { className: 'adp-hint' }, '未配置文本模型') : null
+                ),
+                h('div', { className: 'adp-composer-right' },
+                  h('span', { className: 'adp-composer-count' }, composer.length + ' / 1000'),
+                  h('button', { className: 'adp-send', onClick: send, disabled: busy || !hasTextModel, title: '发送' }, busy ? '…' : '↑')
+                )
+              )
             )
           )
         ),
-        showAdvanced ? h('div', { className: 'adp-advanced-panel' },
-          h('div', { className: 'adp-section-head' }, h('span', { className: 'adp-section-title' }, '生成参数')),
-          h(AdvancedRow, { value: advanced, onChange: (next) => changeAdvanced(next), models, needsDialogue: false }),
-          imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要图片附件；它不生成原生音频。') : null
-        ) : null,
         err ? h('div', { className: 'adp-error' }, err) : null
       )
     }
-
-    function ImagePanel({ imageModels, onStarted, onRefreshAssets }) {
-      const available = (imageModels || []).filter((m) => m.available && (m.capabilities || []).includes('text_to_image'))
-      const [prompt, setPrompt] = useState('')
-      const [model, setModel] = useState(available[0] ? available[0].id : '')
-      const [aspect, setAspect] = useState('1:1')
-      const [area, setArea] = useState('2K')
-      const [busy, setBusy] = useState(false)
-      const [err, setErr] = useState('')
-      const [refAsset, setRefAsset] = useState(null)
-      const [refBusy, setRefBusy] = useState(false)
-      const selected = available.find((m) => m.id === model) || available[0]
-      const takesReference = Boolean(selected && (selected.capabilities || []).includes('image_to_image'))
-      const uploadReference = async (event) => {
-        const file = (event.currentTarget.files || [])[0]
-        event.currentTarget.value = ''
-        if (!file) return
-        if (!file.type.startsWith('image/')) { setErr('参考图只支持图片文件'); return }
-        setRefBusy(true); setErr('')
-        try {
-          const asset = await uploadFile(file, 'image')
-          setRefAsset(asset)
-          onRefreshAssets && await onRefreshAssets()
-        } catch (e) { setErr(String(e.message || e)) } finally { setRefBusy(false) }
-      }
-      useEffect(() => {
-        if (!selected && available.length) { setModel(available[0].id); setArea(available[0].default_area || '2K') }
-        if (selected && selected.default_area && !(selected.areas || []).includes(area)) setArea(selected.default_area)
-      }, [imageModels])
-      const start = async () => {
-        if (!prompt.trim()) { setErr('先描述你想生成的图片'); return }
-        setBusy(true); setErr('')
-        try {
-          const data = await api('/images', { method: 'POST', body: { prompt: prompt.trim(), model: selected ? selected.id : '', aspect, area, reference_asset_id: takesReference && refAsset ? refAsset.id : '' } })
-          onStarted(data.run)
-        } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
-      }
-      if (!available.length) {
-        return h('div', { className: 'adp-card adp-col' }, h('div', { className: 'adp-h2' }, '暂无可用图片模型'), h('div', { className: 'adp-small adp-muted' }, '到「设置」里配置 MiniMax 或火山方舟的 key 后，图片模型会出现在这里。'))
-      }
-      return h('div', { className: 'adp-composer' },
-        h('div', { className: 'adp-composer-head' }, h('span', { className: 'adp-composer-label' }, '描述图片'), h('span', { className: 'adp-composer-count' }, prompt.length + ' / 1000')),
-        h('textarea', { className: 'adp-composer-input', value: prompt, maxLength: 1000, placeholder: '例如：一张 1:1 的商品主图，浅奶油色背景，鹰嘴豆包装居中，旁边散落几颗鹰嘴豆，柔和棚拍光，干净、有食欲。', onChange: (e) => setPrompt(e.currentTarget.value) }),
-        h('div', { className: 'adp-composer-foot' },
-          h('div', { className: 'adp-row' },
-            h('select', { className: 'adp-select adp-model-select', value: selected ? selected.id : '', onChange: (e) => { const next = available.find((m) => m.id === e.currentTarget.value); setModel(e.currentTarget.value); if (next && next.default_area) setArea(next.default_area) } },
-              available.map((m) => h('option', { key: m.id, value: m.id }, m.label))
-            ),
-            h('select', { className: 'adp-select', value: aspect, onChange: (e) => setAspect(e.currentTarget.value) }, (selected ? selected.aspects : ['1:1']).map((x) => h('option', { key: x, value: x }, x))),
-            h('select', { className: 'adp-select', value: area, onChange: (e) => setArea(e.currentTarget.value) }, (selected ? selected.areas : ['2K']).map((x) => h('option', { key: x, value: x }, x))),
-            takesReference ? h('label', { className: 'adp-ref-upload' + (refAsset ? ' has' : ''), title: '可选：上传一张参考图，按图生图生成' },
-              refBusy ? h('span', null, '上传中…')
-                : refAsset
-                  ? h('span', { className: 'adp-ref-chip' }, h('img', { src: mediaUrl(refAsset.path), alt: refAsset.name }), h('span', { className: 'adp-ref-name' }, refAsset.name))
-                  : h('span', null, '＋ 参考图（可选）'),
-              h('input', { type: 'file', accept: 'image/*', onChange: uploadReference, disabled: refBusy, style: { position: 'absolute', width: 1, height: 1, opacity: 0, clip: 'rect(0 0 0 0)', overflow: 'hidden' } })
-            ) : null,
-            refAsset && takesReference ? h('button', { className: 'adp-btn ghost', onClick: () => setRefAsset(null), title: '移除参考图' }, '移除') : null
-          ),
-          h('button', { className: 'adp-primary', onClick: start, disabled: busy }, busy ? '生成中…' : '生成图片', h('span', { className: 'arrow' }, '→'))
-        ),
-        err ? h('div', { className: 'adp-error', style: { padding: '0 15px 12px' } }, err) : null
-      )
-    }
-
-    function StitchBox({ assets, onStarted, onRefreshAssets }) {
-      const videos = (assets || []).filter(a => a.kind === 'video')
-      const [a, setA] = useState(''); const [b, setB] = useState(''); const [plan, setPlan] = useState(null); const [busy, setBusy] = useState(''); const [err, setErr] = useState('')
-      const build = async () => {
-        if (!a || !b) { setErr('请选择两个视频'); return }
-        setBusy('plan'); setErr('')
-        try { const data = await api('/stitch/plan', { method: 'POST', body: { clips: [{ asset_id: a, in_s: 0 }, { asset_id: b, in_s: 0 }], output: { aspect: '9:16', resolution: '720p' }, fit: 'blur_pad', transition: 'cut', audio: 'keep' } }); setPlan(data.plan) } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
-      }
-      const apply = async () => {
-        setBusy('apply'); setErr('')
-        try { const data = await api('/stitch', { method: 'POST', body: { clips: [{ asset_id: a, in_s: 0 }, { asset_id: b, in_s: 0 }], output: { aspect: '9:16', resolution: '720p' }, fit: 'blur_pad', transition: 'cut', audio: 'keep' } }); setPlan(null); onStarted(data.run); onRefreshAssets && onRefreshAssets() } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
-      }
-      return h('div', { className: 'adp-card adp-col', style: { marginTop: 4 } },
-        h('div', { className: 'adp-h2' }, '拼接 / 插入'),
-        h('div', { className: 'adp-small adp-muted' }, '两段顺序拼、长广告插中间；这里先做顺序拼接，计划卡确认后再执行。'),
-        h('div', { className: 'adp-row' },
-          h('select', { className: 'adp-select', value: a, onChange: (e) => setA(e.currentTarget.value) }, h('option', { value: '' }, '选择视频 A'), videos.map(v => h('option', { key: v.id, value: v.id }, v.name))),
-          h('select', { className: 'adp-select', value: b, onChange: (e) => setB(e.currentTarget.value) }, h('option', { value: '' }, '选择视频 B'), videos.map(v => h('option', { key: v.id, value: v.id }, v.name))),
-          h('button', { className: 'adp-btn', onClick: build, disabled: busy === 'plan' }, '生成计划'),
-          plan ? h('button', { className: 'adp-btn primary', onClick: apply, disabled: busy === 'apply' }, '应用拼接') : null
-        ),
-        plan ? h('div', { className: 'adp-col' }, h('div', { className: 'adp-small adp-muted' }, '总时长 ' + fmt(plan.duration_s) + ' · ' + plan.width + '×' + plan.height), (plan.warnings || []).map((w, i) => h('div', { key: i, className: 'adp-error' }, w))) : null,
-        err ? h('div', { className: 'adp-error' }, err) : null
-      )
-    }
-
 
     function assetMeta(a) {
       const kind = { image: '图片', video: '视频', audio: '音频' }[a.kind] || a.kind || '文件'
@@ -2033,6 +2106,82 @@ window.__ModuleLoader__.load({
       )
     }
 
+
+    const REMAKE_TIER_LABELS = { full: '完整复刻', reference: '参考生成', generation: '仅生成', image_only: '图片', none: '不可用' }
+
+    /** Read-only capability contract; the editable defaults sit below it. */
+    function CapabilityDetail({ model, onSaved }) {
+      const io = model.io || {}
+      const remake = model.remake || {}
+      const videos = io.videos
+      const images = io.images
+      const audio = io.audio
+      const bits = []
+      if (videos) bits.push('视频 ≤' + videos.max + ' 段 · ' + videos.min_s + '–' + videos.max_s + 's · 合计 ≤' + videos.total_s + 's · ≤' + videos.max_mb + 'MB')
+      if (images) bits.push('图片 ≤' + images.max + ' 张 · ≤' + images.max_mb + 'MB')
+      if (audio) bits.push('音频 ≤' + audio.max + ' 段 · ≤' + audio.max_s + 's')
+      const outputs = []
+      if ((model.output || {}).video) outputs.push('视频')
+      if ((model.output || {}).audio) outputs.push('音频')
+      if ((model.output || {}).image) outputs.push('图片')
+      return h('details', { className: 'adp-model-cap' },
+        h('summary', null, '能力与参数'),
+        h('div', { className: 'adp-col', style: { gap: 6, marginTop: 6 } },
+          h('div', { className: 'adp-small' }, '复刻等级：' + (REMAKE_TIER_LABELS[remake.tier] || remake.tier || '—') + (remake.real_person_reference === 'restricted' ? ' · 真人参考受限' : remake.real_person_reference === 'allowed' ? ' · 支持真人参考' : '')),
+          bits.length ? h('div', { className: 'adp-small adp-muted' }, bits.join('；')) : null,
+          h('div', { className: 'adp-small adp-muted' }, '输出：' + (outputs.join(' + ') || '—') + ((model.params || {}).resolution && (model.params || {}).resolution.enum ? ' · 分辨率 ' + model.params.resolution.enum.join('/') : '')),
+          h(ModelParamEditor, { model, onSaved })
+        )
+      )
+    }
+
+    /** Editable per-model defaults. Values are validated again by the engine. */
+    function ModelParamEditor({ model, onSaved }) {
+      const [values, setValues] = useState(() => Object.assign({}, model.default_params || {}))
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState('')
+      useEffect(() => { setValues(Object.assign({}, model.default_params || {})); setNote('') }, [model.id, JSON.stringify(model.default_params || {})])
+      const params = model.params || {}
+      const set = (key, value) => setValues((prev) => Object.assign({}, prev, { [key]: value }))
+      const save = async () => {
+        setBusy(true); setNote('')
+        try {
+          const data = await api('/settings/model_params', { method: 'POST', body: { model_id: model.id, values } })
+          setNote(data.ok ? '已保存' : '未保存')
+          if (data.ok && onSaved) await onSaved()
+        } catch (e) { setNote(String(e.message || e)) } finally { setBusy(false) }
+      }
+      const fields = []
+      if (params.resolution && params.resolution.enum) {
+        fields.push(h(FormSelect, { key: 'resolution', label: '默认清晰度', value: String(values.resolution || params.resolution.default || ''), onChange: (x) => set('resolution', x), options: params.resolution.enum.map((x) => ({ value: x, label: x })) }))
+      }
+      if (params.aspect && params.aspect.enum) {
+        fields.push(h(FormSelect, { key: 'aspect', label: '默认比例', value: String(values.aspect || params.aspect.default || ''), onChange: (x) => set('aspect', x), options: params.aspect.enum.map((x) => ({ value: x, label: x })) }))
+      }
+      if (params.area && params.area.enum) {
+        fields.push(h(FormSelect, { key: 'area', label: '默认尺寸', value: String(values.area || params.area.default || ''), onChange: (x) => set('area', x), options: params.area.enum.map((x) => ({ value: x, label: x })) }))
+      }
+      if (params.duration) {
+        const options = []
+        if (params.duration.follow_reference) options.push({ value: 'reference', label: '跟随参考片' })
+        const durations = model.id === 'minimax.h3' ? [] : (model.durations || [])
+        if (durations.length) durations.forEach((x) => options.push({ value: String(x), label: x + 's' }))
+        else if (params.duration.min != null && params.duration.max != null) options.push({ value: String(params.duration.default || params.duration.min), label: params.duration.min + '–' + params.duration.max + 's' })
+        fields.push(h(FormSelect, { key: 'duration', label: '默认时长', value: String(model.id === 'minimax.h3' ? 'reference' : (values.duration || 'reference')), onChange: (x) => set('duration', x === 'reference' ? 'reference' : Number(x)), options }))
+      }
+      if (params.generate_audio) {
+        fields.push(h('label', { key: 'audio', className: 'adp-check' }, h('input', { type: 'checkbox', checked: values.generate_audio !== false, onChange: (e) => set('generate_audio', e.currentTarget.checked) }), '生成原生音频'))
+      }
+      if (!fields.length) return null
+      return h('div', { className: 'adp-col', style: { gap: 6, marginTop: 4 } },
+        h('div', { className: 'adp-field-grid g3' }, fields),
+        h('div', { className: 'adp-row', style: { gap: 8 } },
+          h('button', { className: 'adp-btn ghost', onClick: save, disabled: busy }, busy ? '保存中…' : '保存默认参数'),
+          note ? h('span', { className: 'adp-small adp-muted' }, note) : null
+        )
+      )
+    }
+
     function SettingsTab({ health, models, assets, onRefresh, engine, onSetup }) {
       const [engineBusy, setEngineBusy] = useState(false)
       const [keys, setKeys] = useState([])
@@ -2068,7 +2217,6 @@ window.__ModuleLoader__.load({
         setRefreshing(true); setErr(''); setNotice('')
         try { await onRefresh(); setNotice('模型列表已刷新') } catch (e) { setErr(String(e.message || e)) } finally { setRefreshing(false) }
       }
-      const otherModels = (models || []).filter((m) => !providers.some((p) => p.id === m.provider))
       const enabledModels = (models || []).filter((m) => m.enabled !== false).map((m) => m.id)
       const saveEnabled = async (ids, label) => {
         setBusy('models'); setErr(''); setNotice('')
@@ -2115,7 +2263,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'adp-small adp-muted' }, '首次启动会在数据目录里准备 Python 依赖，约 1 分钟')
           )
         ),
-        h('div', { className: 'adp-section-head', style: { marginTop: 20 } }, h('span', { className: 'adp-step' }, '01'), h('span', { className: 'adp-section-title' }, '视频服务商'), h('span', { className: 'adp-section-note' }, '勾选后才会出现在生成页')),
+        h('div', { className: 'adp-section-head', style: { marginTop: 20 } }, h('span', { className: 'adp-section-title' }, '视频服务商'), h('span', { className: 'adp-section-note' }, '勾选后才会出现在生成页')),
         h('div', { className: 'adp-provider-grid' }, providers.map((p) => {
           const st = statusFor(p.key)
           const providerModels = modelsFor(p.id)
@@ -2143,7 +2291,7 @@ window.__ModuleLoader__.load({
             !openModelsForProvider && enabledProviderModels.length ? h('div', { className: 'adp-model-summary' }, enabledProviderModels.map((m) => h('span', { key: m.id, className: 'adp-model-summary-chip' }, m.label))) : null,
             openModelsForProvider ? h('div', { className: 'adp-provider-models' },
               providerModels.length ? providerModels.map((m) => h('div', { key: m.id, className: 'adp-provider-model' + (m.available ? ' on' : '') + (m.enabled === false ? ' off' : '') },
-                h('div', null, h('div', { className: 'adp-provider-model-name' }, m.label), h(CapabilityChips, { row: m })),
+                h('div', null, h('div', { className: 'adp-provider-model-name' }, m.label), h(CapabilityChips, { row: m }), h(CapabilityDetail, { model: m, onSaved: onRefresh })),
                 h('div', { className: 'adp-row', style: { gap: 5 } }, m.available ? h(Badge, { status: 'ok' }, '可用') : h(Badge, { title: m.reason || '' }, '待 key'), m.native_audio ? h('span', { className: 'adp-small adp-muted' }, '原生对白') : null, h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m), title: '是否出现在生成页' }), '启用'))
               )) : h('div', { className: 'adp-small adp-muted' }, '该厂商暂无可展示模型；保存 key 后刷新。')
             ) : null
@@ -2151,8 +2299,6 @@ window.__ModuleLoader__.load({
         })),
         notice ? h('div', { className: 'adp-notice' }, notice) : null,
         err ? h('div', { className: 'adp-error', style: { marginTop: 10 } }, err) : null,
-        h('div', { className: 'adp-section-head', style: { marginTop: 20 } }, h('span', { className: 'adp-step' }, '02'), h('span', { className: 'adp-section-title' }, '其他模型'), h('span', { className: 'adp-section-note' }, '未接入或可选通道')),
-        h('table', { className: 'adp-table' }, h('thead', null, h('tr', null, h('th', null, '模型'), h('th', null, '能力'), h('th', null, '状态'), h('th', null, '启用'))), h('tbody', null, otherModels.map((m) => h('tr', { key: m.id }, h('td', null, m.label), h('td', null, h(CapabilityChips, { row: m })), h('td', null, h(Badge, { title: m.reason || '' }, '未接入')), h('td', null, h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m) }), '启用')))))),
         h('div', { className: 'adp-hint', style: { marginTop: 12 } }, '密钥只保存在本机数据目录的 settings.json（权限 0600）；不会回显完整值。生产版应迁移到系统 Keychain。')
       )
     }
@@ -2234,7 +2380,7 @@ window.__ModuleLoader__.load({
       }
       render() {
         if (this.state.error) {
-          return h('div', { className: 'adp-root' },
+          return h('div', { className: 'adp-root' + (IS_MAC ? ' adp-mac' : '') },
             h('style', null, CSS),
             h('div', { className: 'adp-crash' },
               h('div', { className: 'box' },
@@ -2254,6 +2400,8 @@ window.__ModuleLoader__.load({
       const [health, setHealth] = useState(null)
       const [models, setModels] = useState([])
       const [dsh, setDsh] = useState(null)
+      const rootRef = useRef(null)
+      const [sidebarOpen, setSidebarOpen] = useState(false)
       const [runs, setRuns] = useState([])
       const [assets, setAssets] = useState([])
       const [personas, setPersonas] = useState([])
@@ -2271,10 +2419,35 @@ window.__ModuleLoader__.load({
           const [h, m, r, a, p, d] = await Promise.all([api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'), api('/dsh/models').catch(() => ({ dsh: null }))])
           setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setPersonas(p.personas || []); setDsh(d.dsh || null)
           setSelected(prev => prev ? (r.runs || []).find(x => x.id === prev.id) || prev : null)
-        } catch (e) { setErr(String(e.message || e)) }
+        } catch (e) { setErr('加载失败：' + String(e.message || e)) }
       }, [])
 
       useEffect(() => { void refresh() }, [refresh])
+
+      useEffect(() => {
+        if (!IS_MAC) return
+        const el = rootRef.current
+        if (!el) return
+        let frame = 0
+        const measure = () => {
+          cancelAnimationFrame(frame)
+          frame = requestAnimationFrame(() => {
+            const left = rootRef.current ? rootRef.current.getBoundingClientRect().left : 0
+            setSidebarOpen(left > 140)
+          })
+        }
+        measure()
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+        if (observer) observer.observe(el)
+        window.addEventListener('resize', measure)
+        const timer = window.setInterval(measure, 600)
+        return () => {
+          cancelAnimationFrame(frame)
+          if (observer) observer.disconnect()
+          window.removeEventListener('resize', measure)
+          window.clearInterval(timer)
+        }
+      }, [])
       // The supervisor answers even while the engine is still being prepared,
       // which is exactly when the page needs to explain what is happening.
       useEffect(() => {
@@ -2294,7 +2467,6 @@ window.__ModuleLoader__.load({
 
       // One catalogue, two views: generation pages filter on kind + capability.
       const videoModels = (models || []).filter((m) => m.kind === 'video')
-      const imageModels = (models || []).filter((m) => m.kind === 'image')
 
       const openRun = (run) => { setSelected(run) }
       const started = (run) => { setSelected(run); void refresh() }
@@ -2331,7 +2503,7 @@ window.__ModuleLoader__.load({
         try { applySetup(await api('/setup/state', { method: 'POST', body: { skip: true } })); setForceSetup(false) } catch (e) { setErr(String(e.message || e)) } finally { setSetupBusy('') }
       }
 
-      return h('div', { className: 'adp-root' },
+      return h('div', { ref: rootRef, className: 'adp-root' + (IS_MAC ? ' adp-mac' : '') + (IS_MAC && sidebarOpen ? ' adp-sidebar-open' : '') },
         h('style', null, CSS),
         h('div', { className: 'adp-top' },
           h('div', { className: 'adp-brand' }, 'AdClip'),
@@ -2362,8 +2534,8 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'adp-btn ghost', style: { marginLeft: 8 }, onClick: () => setForceSetup(true) }, '去处理'))
               : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
-            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, dsh, onStarted: started, personas, onRefreshPersonas: refresh })),
-            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { models: videoModels, dsh, imageModels, onStarted: started, assets, onRefreshAssets: refresh })),
+            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, onStarted: started, personas, onRefreshPersonas: refresh })),
+            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, onStarted: started, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,

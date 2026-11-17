@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx
 
+from ..media import minimax_files
 from .base import Provider, ProviderError, ProviderNotConfigured
 
 CN_BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com").rstrip("/")
@@ -38,6 +39,63 @@ def _error_message(payload: dict) -> str:
     return str(base.get("status_msg") or payload.get("message") or payload.get("error") or payload)
 
 
+def _h3_content(
+    prompt: str,
+    *,
+    images: list[Path] | None = None,
+    reference_video: Path | None = None,
+    reference_audio: Path | None = None,
+) -> list[dict]:
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for image in (images or [])[:9]:
+        file_id = minimax_files.upload_file(image)
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": minimax_files.mm_file(file_id)},
+            "role": "reference_image",
+        })
+    if reference_video is not None:
+        file_id = minimax_files.upload_file(reference_video)
+        content.append({
+            "type": "video_url",
+            "video_url": {"url": minimax_files.mm_file(file_id)},
+            "role": "reference_video",
+        })
+    if reference_audio is not None:
+        file_id = minimax_files.upload_file(reference_audio)
+        content.append({
+            "type": "audio_url",
+            "audio_url": {"url": minimax_files.mm_file(file_id)},
+            "role": "reference_audio",
+        })
+    return content
+
+
+def _h3_payload(
+    prompt: str,
+    *,
+    images: list[Path] | None = None,
+    reference_video: Path | None = None,
+    reference_audio: Path | None = None,
+    duration: int = 5,
+    resolution: str = "768P",
+    aspect: str = "9:16",
+    ratio: str | None = None,
+) -> dict:
+    provider_resolution = resolution
+    if reference_video is not None:
+        provider_resolution = "768P" if str(resolution).lower() in {"480p", "720p", "768p"} else "2K"
+    if str(provider_resolution).upper() not in {"768P", "2K"}:
+        provider_resolution = "2K"
+    return {
+        "model": "MiniMax-H3",
+        "content": _h3_content(prompt, images=images, reference_video=reference_video, reference_audio=reference_audio),
+        "resolution": str(provider_resolution).upper(),
+        "duration": max(4, min(15, int(duration))),
+        "ratio": "adaptive" if reference_video is not None else (ratio or aspect),
+    }
+
+
 class MiniMaxProvider(Provider):
     id = "minimax"
 
@@ -51,6 +109,10 @@ class MiniMaxProvider(Provider):
         aspect: str = "9:16",
         model: str = "minimax.hailuo-2.3-fast",
         output: Path,
+        reference_video: Path | None = None,
+        reference_audio: Path | None = None,
+        ratio: str | None = None,
+        generate_audio: bool = True,
     ) -> Path:
         key = _api_key()
         if not key:
@@ -64,13 +126,16 @@ class MiniMaxProvider(Provider):
             try:
                 with httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
                     if api == "v2":
-                        payload = {
-                            "model": model_name,
-                            "content": [{"type": "text", "text": prompt}],
-                            "resolution": "2K",
-                            "duration": max(4, min(15, int(duration))),
-                            "ratio": aspect,
-                        }
+                        payload = _h3_payload(
+                            prompt,
+                            images=images,
+                            reference_video=reference_video,
+                            reference_audio=reference_audio,
+                            duration=duration,
+                            resolution=resolution,
+                            aspect=aspect,
+                            ratio=ratio,
+                        )
                         created = client.post(f"{base}/v2/video_generation", headers=headers, json=payload)
                         if created.status_code >= 400:
                             raise ProviderError(f"MiniMax 创建失败 HTTP {created.status_code}: {created.text[:300]}")
@@ -93,6 +158,8 @@ class MiniMaxProvider(Provider):
                                     raise ProviderError("MiniMax 成功但没有视频 URL")
                                 return self._download(client, url, output)
                         raise ProviderError("MiniMax 任务超时")
+                    if reference_video is not None:
+                        raise ProviderError("Hailuo 2.3 Fast 不支持参考视频")
                     payload = {
                         "model": model_name,
                         "prompt": prompt,

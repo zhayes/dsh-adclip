@@ -31,6 +31,34 @@ def _find(run: Any, segment_id: str) -> dict[str, Any]:
     raise ValueError(f"segment not found: {segment_id}")
 
 
+def _snapshot(run: Any) -> dict[str, Any]:
+    return {
+        "status": run.status,
+        "step": run.step,
+        "progress": run.progress,
+        "error": run.error,
+        "last_edit_error": run.last_edit_error,
+        "result": dict(run.result or {}),
+        "storyboard": [item.model_dump() if hasattr(item, "model_dump") else dict(item) for item in (run.storyboard or [])],
+        "version": run.version,
+        "segment_edits": list(run.segment_edits or []),
+        "changes": list(run.changes or []),
+        "finished_at": run.finished_at,
+    }
+
+
+def _restore_failed_edit(run_id: str, snapshot: dict[str, Any], error: str) -> None:
+    """Keep the last deliverable instead of turning a successful run into a failure."""
+    run = store.read_run(run_id)
+    if run is None:
+        return
+    for key in ("status", "step", "progress", "result", "version", "segment_edits", "changes", "finished_at"):
+        setattr(run, key, snapshot.get(key))
+    run.error = snapshot.get("error")
+    run.last_edit_error = error[:800]
+    store.write_run(run)
+
+
 def _versions(run_id: str) -> Path:
     path = store.run_dir(run_id) / "versions"
     path.mkdir(parents=True, exist_ok=True)
@@ -65,11 +93,12 @@ def _refresh(run: Any) -> None:
     run.step = "qa"
     run.progress = 1.0
     run.error = None
+    run.last_edit_error = None
     run.finished_at = store.now()
     store.write_run(run)
 
 
-def _run_replace(run_id: str, segment_id: str) -> None:
+def _run_replace(run_id: str, segment_id: str, snapshot: dict[str, Any] | None = None) -> None:
     run = store.read_run(run_id)
     if run is None:
         return
@@ -134,16 +163,19 @@ def _run_replace(run_id: str, segment_id: str) -> None:
         })
         _refresh(run)
     except Exception as exc:  # noqa: BLE001
-        run = store.read_run(run_id)
-        if run:
-            run.status = "failed"
-            run.error = f"{type(exc).__name__}: {exc}"[:800]
-            run.finished_at = store.now()
-            store.write_run(run)
+        if snapshot is not None:
+            _restore_failed_edit(run_id, snapshot, f"{type(exc).__name__}: {exc}")
+        else:
+            run = store.read_run(run_id)
+            if run:
+                run.status = "failed"
+                run.error = f"{type(exc).__name__}: {exc}"[:800]
+                run.finished_at = store.now()
+                store.write_run(run)
         traceback.print_exc()
 
 
-def _run_edit(run_id: str, segment_id: str, instruction: str) -> None:
+def _run_edit(run_id: str, segment_id: str, instruction: str, snapshot: dict[str, Any] | None = None) -> None:
     """Rewrite one beat, then regenerate only its slot."""
     try:
         run = store.read_run(run_id)
@@ -152,14 +184,17 @@ def _run_edit(run_id: str, segment_id: str, instruction: str) -> None:
         seg = _find(run, segment_id)
         script.rewrite_shot(run, int(seg.get("index") or 0), instruction)
         segment.build_storyboard(run_id)
-        _run_replace(run_id, segment_id)
+        _run_replace(run_id, segment_id, snapshot)
     except Exception as exc:  # noqa: BLE001
-        run = store.read_run(run_id)
-        if run:
-            run.status = "failed"
-            run.error = f"{type(exc).__name__}: {exc}"[:800]
-            run.finished_at = store.now()
-            store.write_run(run)
+        if snapshot is not None:
+            _restore_failed_edit(run_id, snapshot, f"{type(exc).__name__}: {exc}")
+        else:
+            run = store.read_run(run_id)
+            if run:
+                run.status = "failed"
+                run.error = f"{type(exc).__name__}: {exc}"[:800]
+                run.finished_at = store.now()
+                store.write_run(run)
         traceback.print_exc()
 
 
@@ -172,12 +207,19 @@ def start_edit(run_id: str, segment_id: str, instruction: str) -> Any:
     _find(run, segment_id)
     if run.status != "succeeded":
         raise ValueError("only a succeeded run can be edited")
+    if str((run.selection or {}).get("mode")) == "h3_reference":
+        raise ValueError("H3 复刻不支持单镜替换；请使用整条重生成")
+    script_path = store.run_dir(run_id) / "artifacts" / "script.json"
+    script_doc = store.read_json(script_path, {}) or {}
+    if not (script_doc.get("beats") or []):
+        raise ValueError("单镜编辑需要 script.json；当前任务没有脚本，请使用整条重生成")
+    snapshot = _snapshot(run)
     run.status = "running"
     run.step = "segment"
     run.progress = 0.05
     run.error = None
     store.write_run(run)
-    threading.Thread(target=_run_edit, args=(run_id, segment_id, instruction), daemon=True, name="adstudio-segment-edit").start()
+    threading.Thread(target=_run_edit, args=(run_id, segment_id, instruction, snapshot), daemon=True, name="adstudio-segment-edit").start()
     return run
 
 
@@ -187,15 +229,18 @@ def start_replace(run_id: str, segment_id: str) -> Any:
         raise ValueError("run not found")
     if run.status == "running":
         raise ValueError("run is busy")
-    seg = _find(run, segment_id)
+    _find(run, segment_id)
     if run.status != "succeeded":
         raise ValueError("only a succeeded run can be edited")
+    if str((run.selection or {}).get("mode")) == "h3_reference":
+        raise ValueError("H3 复刻不支持单镜替换；请使用整条重生成")
+    snapshot = _snapshot(run)
     run.status = "running"
     run.step = "segment"
     run.progress = 0.1
     run.error = None
     store.write_run(run)
-    threading.Thread(target=_run_replace, args=(run_id, segment_id), daemon=True, name="adstudio-segment-replace").start()
+    threading.Thread(target=_run_replace, args=(run_id, segment_id, snapshot), daemon=True, name="adstudio-segment-replace").start()
     return run
 
 
