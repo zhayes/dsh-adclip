@@ -387,6 +387,24 @@ window.__ModuleLoader__.load({
 .adp-date-input{width:124px;flex:0 0 auto}
 .adp-upload-label{position:relative;overflow:hidden;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 @media(max-width:620px){.adp-modal-backdrop{padding:8px}.adp-modal{max-height:94vh;width:100%}.adp-modal-body{padding:13px}.adp-modal-foot{padding:12px}.adp-persona-grid{grid-template-columns:1fr}.adp-composer-input{min-height:120px;font-size:13px}.adp-composer-foot{align-items:stretch}.adp-composer-foot .adp-primary{width:100%;justify-content:center}.adp-model-select{min-width:0;flex:1 1 auto}.adp-text-model{max-width:none;flex:1 1 100%}.adp-text-model .adp-select{max-width:none;flex:1 1 auto}.adp-top{gap:8px;padding:0 12px}.adp-sub{display:none}.adp-tabs{margin-left:0}.adp-tab{padding:0 8px}.adp-body{padding:16px 12px 32px}.adp-page-head{display:block}.adp-page-meta{margin-top:8px}.adp-field-grid.g3,.adp-field-grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.adp-actionbar{margin-left:-14px;margin-right:-14px;padding:12px 14px}.adp-form-col{padding:16px 14px 0}.adp-asset-col{padding:14px}.adp-slots{grid-template-columns:1fr 1fr}.adp-result-head{flex-wrap:wrap}.adp-result-badges{width:100%;justify-content:flex-start}.adp-stage{height:320px}.adp-shot{grid-template-columns:56px minmax(0,1fr) auto;gap:9px;padding:10px}.adp-shot-thumb{width:56px;height:76px}.adp-shot-edit span{display:none}.adp-facts{grid-template-columns:1fr 1fr}}
+
+.adp-setup{max-width:760px;margin:0 auto}
+.adp-setup-hero{margin:6px 0 18px}
+.adp-setup-item{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px 16px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);margin-bottom:8px}
+.adp-setup-item.bad{border-color:rgba(208,90,90,.45)}
+.adp-setup-item.warn{border-color:rgba(229,180,92,.35)}
+.adp-setup-ico{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
+.adp-setup-item.ok .adp-setup-ico{background:rgba(60,170,110,.16);color:#3caa6e}
+.adp-setup-item.bad .adp-setup-ico{background:rgba(208,90,90,.15);color:#d05a5a}
+.adp-setup-item.warn .adp-setup-ico{background:rgba(229,180,92,.15);color:#C99B54}
+.adp-setup-title{font-weight:650;font-size:13px;line-height:1.4}
+.adp-setup-detail{font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all;margin-top:3px;line-height:1.5}
+.adp-setup-fix{grid-column:2 / -1;margin-top:9px;display:flex;flex-direction:column;gap:7px}
+.adp-setup-cmd{display:flex;align-items:center;gap:7px}
+.adp-setup-cmd code{flex:1 1 auto;min-width:0;overflow:auto;white-space:nowrap;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:7px 9px}
+.adp-setup-note{font-size:10.5px;color:var(--dsw-alias-label-secondary);line-height:1.6}
+.adp-setup-foot{display:flex;align-items:center;gap:9px;margin-top:18px;flex-wrap:wrap}
+.adp-setup-group{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;color:#C99B54;margin:18px 0 7px}
 `
     /** Supervisor state, available even while the engine is still being prepared. */
     async function hostStatus() {
@@ -2011,7 +2029,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function SettingsTab({ health, models, assets, onRefresh, engine }) {
+    function SettingsTab({ health, models, assets, onRefresh, engine, onSetup }) {
       const [engineBusy, setEngineBusy] = useState(false)
       const [keys, setKeys] = useState([])
       const [values, setValues] = useState({})
@@ -2089,6 +2107,7 @@ window.__ModuleLoader__.load({
           health && health.deps && health.deps.ok === false ? h('div', { className: 'adp-small adp-error', style: { marginTop: 4 } }, health.deps.hint) : null,
           h('div', { className: 'adp-row', style: { marginTop: 8 } },
             h('button', { className: 'adp-btn', disabled: engineBusy, onClick: async () => { setEngineBusy(true); setErr(''); try { await restartEngineHost(); setNotice('已请求重新启动引擎，状态会自动刷新') } catch (e) { setErr(String(e.message || e)) } finally { setEngineBusy(false) } } }, engineBusy ? '重启中…' : '重新启动引擎'),
+            h('button', { className: 'adp-btn ghost', onClick: onSetup }, '环境检查'),
             h('span', { className: 'adp-small adp-muted' }, '首次启动会在数据目录里准备 Python 依赖，约 1 分钟')
           )
         ),
@@ -2134,6 +2153,70 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function SetupPage({ preflight, engine, busy, onRecheck, onStart, onSkip }) {
+      const [copied, setCopied] = useState('')
+      const items = (preflight && preflight.items) || []
+      const required = items.filter((i) => i.level === 'required')
+      const optional = items.filter((i) => i.level === 'optional')
+      const blocking = required.filter((i) => i.status === 'missing')
+      const okAll = Boolean(preflight && items.length && blocking.length === 0)
+      const copy = async (id, text) => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setCopied(id)
+          setTimeout(() => setCopied(''), 1600)
+        } catch { /* clipboard denied: the command stays selectable */ }
+      }
+      const row = (item) => {
+        const cls = item.status === 'ok' ? 'ok' : (item.status === 'warn' ? 'warn' : 'bad')
+        const remedy = item.remedy
+        return h('div', { key: item.id, className: 'adp-setup-item ' + cls },
+          h('div', { className: 'adp-setup-ico' }, item.status === 'ok' ? '✓' : (item.status === 'warn' ? '!' : '✕')),
+          h('div', null,
+            h('div', { className: 'adp-setup-title' }, item.title),
+            h('div', { className: 'adp-setup-detail' }, item.detail)
+          ),
+          remedy && remedy.kind === 'command'
+            ? h('button', { className: 'adp-btn ghost', onClick: () => copy(item.id, remedy.command) }, copied === item.id ? '已复制' : '复制命令')
+            : null,
+          remedy ? h('div', { className: 'adp-setup-fix' },
+            remedy.kind === 'command' ? h('div', { className: 'adp-setup-cmd' }, h('code', null, remedy.command)) : null,
+            remedy.note ? h('div', { className: 'adp-setup-note' }, remedy.note) : null,
+            remedy.url ? h('a', { className: 'adp-small', href: remedy.url, target: '_blank', rel: 'noreferrer' }, '打开下载页 ↗') : null
+          ) : null
+        )
+      }
+      const engineLine = !engine
+        ? '正在连接 Host…'
+        : engine.ok
+          ? '引擎已在线（端口 ' + (engine.port || '—') + '）'
+          : '引擎' + engineStageLabel(engine) + '：' + ((engine.boot && engine.boot.detail) || engine.detail || '—')
+      return h('div', { className: 'adp-setup' },
+        h('div', { className: 'adp-setup-hero' },
+          h('div', { className: 'adp-eyebrow' }, 'FIRST RUN / SETUP'),
+          h('h1', { className: 'adp-title' }, okAll ? '运行环境已就绪' : '首次使用，先准备运行环境'),
+          h('p', { className: 'adp-lede' }, okAll
+            ? 'AdClip 的引擎和媒体工具都能用了。这套检查 macOS 与 Windows 共用，换机器时还会再跑一次。'
+            : 'AdClip 的引擎跑在本机 Python 上，媒体处理依赖 ffmpeg。下面标红的项需要先装好；命令可以直接复制到终端执行，装完回到这里点「重新检测」。')
+        ),
+        items.length ? h('div', null,
+          h('div', { className: 'adp-setup-group' }, '必需'),
+          required.map(row),
+          optional.length ? h('div', { className: 'adp-setup-group' }, '可选') : null,
+          optional.map(row)
+        ) : h('div', { className: 'adp-notice' }, '正在检查环境…'),
+        h('div', { className: 'adp-small adp-muted', style: { marginTop: 10 } }, engineLine),
+        h('div', { className: 'adp-setup-foot' },
+          h('button', { className: 'adp-btn', disabled: busy === 'recheck', onClick: onRecheck }, busy === 'recheck' ? '检测中…' : '重新检测'),
+          h('div', { className: 'adp-grow' }),
+          h('button', { className: 'adp-btn ghost', disabled: busy === 'skip', onClick: onSkip }, '稍后再说'),
+          h('button', { className: 'adp-btn primary', disabled: !okAll || busy === 'start', onClick: onStart }, busy === 'start' ? '保存中…' : '开始使用')
+        ),
+        h('div', { className: 'adp-setup-note', style: { marginTop: 14 } },
+          '装完 Python 或 ffmpeg 后先点「重新检测」。如果仍显示缺失，请完全退出 DSH 再打开——已经运行的进程看不到新的 PATH，只重启插件引擎不够。')
+      )
+    }
+
     class AdClipBoundary extends React.Component {
       constructor(props) {
         super(props)
@@ -2173,6 +2256,8 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = useState(null)
       const [err, setErr] = useState('')
       const [engine, setEngine] = useState(null)
+      const [forceSetup, setForceSetup] = useState(false)
+      const [setupBusy, setSetupBusy] = useState('')
 
       const refresh = useCallback(async () => {
         const state = await hostStatus()
@@ -2210,12 +2295,44 @@ window.__ModuleLoader__.load({
       const openRun = (run) => { setSelected(run) }
       const started = (run) => { setSelected(run); void refresh() }
 
+      // First run, or a required dependency disappeared later: show the setup
+      // page instead of letting a run fail at the first ffprobe call.
+      const preflight = (engine && engine.preflight) || null
+      const setupState = (preflight && preflight.state) || { doneAt: null, skippedAt: null }
+      const blockedCount = preflight ? (preflight.blocking || []).length : 0
+      // `checkedAt` is empty for the first few hundred ms after the Host starts.
+      const checking = Boolean(preflight && !preflight.checkedAt && !setupState.doneAt && !setupState.skippedAt)
+      const needsSetup = Boolean(forceSetup || checking || (preflight && !setupState.skippedAt && (!setupState.doneAt || blockedCount > 0)))
+
+      const applySetup = (data) => {
+        if (!data) return
+        setEngine((prev) => {
+          const base = Object.assign({}, prev || {})
+          const next = Object.assign({}, base.preflight || {}, data.preflight || {})
+          if (data.setup) next.state = data.setup
+          base.preflight = next
+          return base
+        })
+      }
+      const setupRecheck = async () => {
+        setSetupBusy('recheck'); setErr('')
+        try { applySetup(await api('/setup/recheck', { method: 'POST' })) } catch (e) { setErr(String(e.message || e)) } finally { setSetupBusy('') }
+      }
+      const setupStart = async () => {
+        setSetupBusy('start'); setErr('')
+        try { applySetup(await api('/setup/state', { method: 'POST', body: { done: true } })); setForceSetup(false); await refresh() } catch (e) { setErr(String(e.message || e)) } finally { setSetupBusy('') }
+      }
+      const setupSkip = async () => {
+        setSetupBusy('skip'); setErr('')
+        try { applySetup(await api('/setup/state', { method: 'POST', body: { skip: true } })); setForceSetup(false) } catch (e) { setErr(String(e.message || e)) } finally { setSetupBusy('') }
+      }
+
       return h('div', { className: 'adp-root' },
         h('style', null, CSS),
         h('div', { className: 'adp-top' },
           h('div', { className: 'adp-brand' }, 'AdClip'),
           h('div', { className: 'adp-sub' }, 'AI AD VIDEO STUDIO'),
-          h('div', { className: 'adp-tabs' },
+          h('div', { className: 'adp-tabs', style: needsSetup ? { visibility: 'hidden' } : null },
             ['recreate', 'text', 'assets', 'personas', 'tasks', 'settings'].map(id => h('button', { key: id, className: 'adp-tab' + (tab === id ? ' on' : ''), onClick: () => { setTab(id); setSelected(null) } }, { recreate: '爆款复刻', text: '自由创作', assets: '素材', personas: '模特', tasks: '任务', settings: '设置' }[id]))
           ),
           h('div', { className: 'adp-grow' }),
@@ -2224,7 +2341,9 @@ window.__ModuleLoader__.load({
             : (health ? h(Badge, { status: health.ok ? 'ok' : 'bad' }, health.ok ? '引擎在线' : '引擎离线') : h(Badge, null, '连接中…'))
         ),
         h('div', { className: 'adp-body' },
-          h('div', { className: 'adp-wrap' },
+          needsSetup
+            ? h(SetupPage, { preflight, engine, busy: setupBusy, onRecheck: setupRecheck, onStart: setupStart, onSkip: setupSkip })
+            : h('div', { className: 'adp-wrap' },
             engine && !engine.ok && engine.boot && (engine.boot.stage === 'preparing' || engine.boot.stage === 'failed')
               ? h('div', { className: engine.boot.stage === 'failed' ? 'adp-error' : 'adp-notice', style: { marginBottom: 10 } },
                   engine.boot.stage === 'preparing'
@@ -2233,13 +2352,18 @@ window.__ModuleLoader__.load({
                 )
               : null,
             err ? h('div', { className: 'adp-error' }, err) : null,
+            blockedCount > 0 && !needsSetup
+              ? h('div', { className: 'adp-notice', style: { marginBottom: 10 } },
+                  '运行环境缺少 ' + blockedCount + ' 项，相关功能不可用。',
+                  h('button', { className: 'adp-btn ghost', style: { marginLeft: 8 }, onClick: () => setForceSetup(true) }, '去处理'))
+              : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
             h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, dsh, onStarted: started, personas, onRefreshPersonas: refresh })),
             h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { models: videoModels, dsh, imageModels, onStarted: started, assets, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,
-            !selected && tab === 'settings' ? h(SettingsTab, { health, models, assets, onRefresh: refresh, engine }) : null,
+            !selected && tab === 'settings' ? h(SettingsTab, { health, models, assets, onRefresh: refresh, engine, onSetup: () => setForceSetup(true) }) : null,
           )
         )
       )

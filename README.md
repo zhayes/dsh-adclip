@@ -22,6 +22,7 @@ PYTHONPATH=src .venv/bin/python -m adclip.api --port 8787
 
 ```bash
 PYTHONPATH=src .venv/bin/python tests/smoke.py
+node tests/preflight.mjs        # first-run environment checks (all platforms)
 ```
 
 ## First slice

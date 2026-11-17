@@ -41,6 +41,9 @@ export function registerProxy(ctx, supervisor, dsh) {
     }
     const url = new URL(req.url || '/', supervisor.url || 'http://127.0.0.1')
     if (url.pathname === '/adplus/health') {
+      // The first-run page polls this; make sure it gets a check even if the
+      // engine never started (autoStart off, or a failed bootstrap).
+      if (supervisor.preflightData && !supervisor.preflightData.checkedAt) void supervisor.refreshPreflight()
       writeJson(res, 200, { ok: true, engine: supervisor.snapshot ? supervisor.snapshot() : supervisor.status })
       return
     }
@@ -67,6 +70,31 @@ export function registerProxy(ctx, supervisor, dsh) {
       // take minutes, and the page already polls /adplus/health for progress.
       void supervisor.restart()
       writeJson(res, 202, { ok: true, restarting: true, engine: supervisor.status })
+      return
+    }
+    // The first-run page must answer while the engine is still down, so these
+    // routes sit before the engine-availability guard.
+    if (url.pathname === '/adplus/api/setup') {
+      if (!supervisor.preflightData?.checkedAt) await supervisor.refreshPreflight()
+      writeJson(res, 200, { ok: true, setup: supervisor.setupState(), preflight: supervisor.preflightData })
+      return
+    }
+    if (url.pathname === '/adplus/api/setup/state' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req) || '{}')
+        const patch = {}
+        if (body.done === true) patch.doneAt = new Date().toISOString()
+        if (body.skip === true) patch.skippedAt = new Date().toISOString()
+        if (body.reset === true) { patch.doneAt = null; patch.skippedAt = null }
+        const setup = supervisor.markSetup(patch)
+        writeJson(res, 200, { ok: true, setup, preflight: supervisor.preflightData })
+      } catch (error) {
+        writeJson(res, 400, { error: { code: 'bad_setup_state', message: String(error?.message || error) } })
+      }
+      return
+    }
+    if (url.pathname === '/adplus/api/setup/recheck' && req.method === 'POST') {
+      writeJson(res, 200, { ok: true, preflight: await supervisor.refreshPreflight() })
       return
     }
     if (!supervisor.status?.ok) {

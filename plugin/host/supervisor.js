@@ -9,7 +9,8 @@ import { spawn } from 'node:child_process'
 import http from 'node:http'
 import crypto from 'node:crypto'
 import process from 'node:process'
-import { defaultDataDir, ensureRuntime, freePort, sleep } from './engine.js'
+import { augmentedPath, defaultDataDir, ensureRuntime, freePort, sleep } from './engine.js'
+import { preflight, readSetupState, writeSetupState } from './preflight.js'
 
 export { defaultDataDir }
 
@@ -63,6 +64,8 @@ export class EngineSupervisor {
     this.running = null
     this.boot = { stage: 'idle', detail: '', logs: [], source: '' }
     this.status = { ok: false, detail: 'not started', url: this.url, boot: this.boot }
+    // Rendered by the first-run page; empty until the first check finishes.
+    this.preflightData = { ok: false, blocking: [], checkedAt: '', firstRun: false, state: readSetupState(this.dataDir), items: [], paths: {} }
   }
 
   get url() { return this.port ? `http://127.0.0.1:${this.port}` : '' }
@@ -82,8 +85,43 @@ export class EngineSupervisor {
       engineRoot: this.engineRoot,
       moduleRoot: this.moduleRoot,
       boot: this.boot,
+      preflight: this.preflightData,
       logs: (this.status.logs || this.logs).slice(-40),
     }
+  }
+
+  /** Re-run every environment check and cache the answer for the UI. */
+  async refreshPreflight(runtime) {
+    const seq = (this.preflightSeq = (this.preflightSeq || 0) + 1)
+    try {
+      const next = await preflight({ config: this.config, dataDir: this.dataDir, pluginRoot: this.pluginRoot, runtime })
+      // Boot and the last check race on first launch; only the newest wins.
+      if (seq === this.preflightSeq) this.preflightData = next
+    } catch (error) {
+      this.log(`preflight failed: ${error?.message || error}`)
+      if (seq === this.preflightSeq) {
+        this.preflightData = {
+          ok: false, ready: false, blocking: ['check'], pending: [],
+          platform: process.platform, checkedAt: new Date().toISOString(),
+          firstRun: false, state: readSetupState(this.dataDir), paths: {},
+          items: [{
+            id: 'check', level: 'required', status: 'missing',
+            title: '环境检查失败', detail: String(error?.message || error), remedy: null,
+          }],
+        }
+      }
+    }
+    return this.preflightData
+  }
+
+  setupState() {
+    return readSetupState(this.dataDir)
+  }
+
+  markSetup(patch) {
+    const next = writeSetupState(this.dataDir, patch)
+    this.preflightData = { ...this.preflightData, state: next, firstRun: !next.doneAt && !next.skippedAt }
+    return next
   }
 
   async health() {
@@ -98,6 +136,7 @@ export class EngineSupervisor {
   /** Prepare, launch and confirm the engine. Safe to call repeatedly. */
   async start() {
     if (this.running) return this.running
+    if (!this.preflightData.checkedAt) void this.refreshPreflight()
     this.running = this.#start().finally(() => { this.running = null })
     return this.running
   }
@@ -108,6 +147,7 @@ export class EngineSupervisor {
       if (existing.ok && existing.data?.service === 'adclip') {
         this.status = { ok: true, detail: 'reused', url: this.url, data: existing.data, boot: this.boot }
         this.setBoot('ready', '已复用正在运行的引擎')
+        void this.refreshPreflight()
         this.startWatch()
         return
       }
@@ -129,6 +169,7 @@ export class EngineSupervisor {
     this.python = runtime.python
     this.engineRoot = runtime.engineRoot
     this.moduleRoot = runtime.moduleRoot || runtime.engineRoot
+    await this.refreshPreflight(runtime)
     this.setBoot('preparing', `引擎运行时就绪（${runtime.source}），启动服务…`, { source: runtime.source })
     this.port = this.fixedPort || await freePort()
     this.status = { ok: false, detail: 'starting', url: this.url, boot: this.boot }
@@ -159,7 +200,12 @@ export class EngineSupervisor {
       cwd: this.moduleRoot,
       env: {
         ...process.env,
+        // PATH is a snapshot: an ffmpeg installed after the Host started is not
+        // in it. Add the known install roots so a fresh install is visible now.
+        PATH: augmentedPath(),
         PYTHONUNBUFFERED: '1',
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
         ADSTUDIO_DATA_DIR: this.dataDir,
       },
       stdio: ['ignore', 'pipe', 'pipe'],

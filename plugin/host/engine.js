@@ -139,8 +139,86 @@ function run(file, args, { cwd, timeoutMs = 180000 } = {}) {
   })
 }
 
-function systemPythons() {
+export function systemPythons() {
   return process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python']
+}
+
+export function runCommand(file, args, options) {
+  return run(file, args, options)
+}
+
+function whichSync(name, extraDirs = []) {
+  const exts = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
+  const dirs = [...(process.env.PATH || '').split(path.delimiter), ...extraDirs].filter(Boolean)
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext)
+      if (isFile(candidate)) return candidate
+    }
+  }
+  return ''
+}
+
+function findFile(root, name, depth = 4) {
+  if (!root || depth <= 0) return ''
+  let entries = []
+  try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { return '' }
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase()) return path.join(root, entry.name)
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const hit = findFile(path.join(root, entry.name), name, depth - 1)
+    if (hit) return hit
+  }
+  return ''
+}
+
+/** Install roots that can appear after the Host process started. */
+export function extraToolDirs() {
+  const dirs = []
+  if (process.platform === 'win32') {
+    if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'))
+    if (process.env.USERPROFILE) dirs.push(path.join(process.env.USERPROFILE, 'scoop', 'shims'))
+    dirs.push('C:\\ffmpeg\\bin')
+    if (process.env.ProgramFiles) dirs.push(path.join(process.env.ProgramFiles, 'ffmpeg', 'bin'))
+  } else {
+    dirs.push('/opt/homebrew/bin', '/usr/local/bin')
+  }
+  return dirs.filter(isDir)
+}
+
+/** Resolve a tool now, including locations installed after startup. */
+export function resolveBinary(name) {
+  const direct = whichSync(name, extraToolDirs())
+  if (direct) return direct
+  if (process.platform === 'win32') {
+    const packages = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages')
+    const hit = findFile(packages, `${name}.exe`)
+    if (hit) return hit
+  }
+  return ''
+}
+
+/** PATH plus the extra tool roots, for spawning the engine. */
+export function augmentedPath() {
+  const parts = [process.env.PATH || '', ...extraToolDirs()].filter(Boolean)
+  return Array.from(new Set(parts.join(path.delimiter).split(path.delimiter).filter(Boolean))).join(path.delimiter)
+}
+
+/** Interpreters the Windows `py` launcher knows, newest first. */
+export async function windowsInterpreters() {
+  const rows = []
+  if (process.platform !== 'win32') return rows
+  const result = await run('py', ['-0p'], { timeoutMs: 15000 })
+  if (result.code !== 0) return rows
+  for (const line of String(result.output).split(/\r?\n/)) {
+    // " -V:3.12 *        C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe"
+    const match = /-V:(\d+)\.(\d+)(?:-\d+)?(\s+\*)?\s+(.+?python\.exe)\s*$/i.exec(line)
+    if (!match) continue
+    rows.push({ version: [Number(match[1]), Number(match[2])], path: match[4].trim() })
+  }
+  return rows.sort((a, b) => b.version[0] - a.version[0] || b.version[1] - a.version[1])
 }
 
 /** Prompt for a loopback port, or reuse the configured one. */
@@ -164,27 +242,28 @@ export async function freePort() {
 }
 
 /** Version of an interpreter, or null when it cannot be queried. */
-async function pythonVersion(python) {
+export async function pythonVersion(python) {
   const result = await run(python, ['-c', 'import sys;print("%d.%d" % sys.version_info[:2])'], { timeoutMs: 15000 })
   if (result.code !== 0) return null
   const match = /^(\d+)\.(\d+)/.exec(result.output.trim())
   return match ? [Number(match[1]), Number(match[2])] : null
 }
 
-function versionOk(version) {
+export function versionOk(version) {
   if (!version) return false
   return version[0] > MIN_PYTHON[0] || (version[0] === MIN_PYTHON[0] && version[1] >= MIN_PYTHON[1])
 }
 
 /** Smallest install that can run the engine, by platform. */
-function pythonHint() {
+function pythonHint(rejected = []) {
+  const tail = rejected.length ? `已尝试但不可用：${rejected.join('、')}。` : ''
   if (process.platform === 'darwin') {
-    return '未找到 Python 3.10+。安装 Xcode 命令行工具（xcode-select --install）或 Homebrew：brew install python@3.12'
+    return tail + '未找到 Python 3.10+。安装 Xcode 命令行工具（xcode-select --install）或 Homebrew：brew install python@3.12'
   }
   if (process.platform === 'win32') {
-    return '未找到 Python 3.10+。请从 https://www.python.org/downloads/ 安装（勾选 Add python.exe to PATH），或 winget install Python.Python.3.12'
+    return tail + '未找到 Python 3.10+。请从 https://www.python.org/downloads/ 安装（勾选 Add python.exe to PATH），或 winget install Python.Python.3.12'
   }
-  return '未找到 Python 3.10+。请安装发行版提供的 python3-venv 与 python3-pip，例如 apt install python3 python3-venv python3-pip'
+  return tail + '未找到 Python 3.10+。请安装发行版提供的 python3-venv 与 python3-pip，例如 apt install python3 python3-venv python3-pip'
 }
 
 /** Ensure a python that can import the engine's dependencies exists.
@@ -227,12 +306,27 @@ export async function ensureRuntime({ config = {}, dataDir = defaultDataDir(), p
     return fail(`引擎依赖清单缺失：${resolved.requirements}`)
   }
   let python = null
-  for (const candidate of systemPythons()) {
+  const rejected = []
+  // Windows: `py -0p` knows every installed interpreter, including ones the
+  // default `py`/`python` does not point at.
+  for (const row of await windowsInterpreters()) {
+    if (/\\WindowsApps\\/i.test(row.path)) {
+      logger.write(`skip Microsoft Store stub ${row.path}`)
+      continue
+    }
+    const version = await pythonVersion(row.path)
+    if (versionOk(version)) { python = row.path; break }
+    rejected.push(`${row.path}${version ? ` (${version.join('.')})` : ''}`)
+  }
+  for (const candidate of python ? [] : systemPythons()) {
     const version = await pythonVersion(candidate)
     if (versionOk(version)) { python = candidate; break }
-    if (version) logger.write(`${candidate} is ${version.join('.')}, need ${MIN_PYTHON.join('.')}+`)
+    if (version) {
+      logger.write(`${candidate} is ${version.join('.')}, need ${MIN_PYTHON.join('.')}+`)
+      rejected.push(`${candidate} (${version.join('.')})`)
+    }
   }
-  if (!python) return fail(pythonHint())
+  if (!python) return fail(pythonHint(rejected))
   logger.write(`bootstrapping venv with ${python} (${resolved.venvDir})`)
   const created = await run(python, ['-m', 'venv', resolved.venvDir], { timeoutMs: 120000 })
   if (created.code !== 0) {

@@ -1,6 +1,6 @@
 [project]
 name = "adclip"
-version = "0.1.1"
+version = "0.1.2"
 description = "Ad+ Studio: lean native-audio ad video service for the DSH plugin"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

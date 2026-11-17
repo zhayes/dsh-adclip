@@ -22,6 +22,37 @@ composed when the Host starts, so a bundle enabled in a running Host has no
 sidebar entry until the next start. After the restart, **AdClip** appears in the
 sidebar.
 
+## Installing a version inside pnpm's 24-hour window
+
+pnpm 11, which DSH bundles, defaults to `minimumReleaseAge: 1440`: a version
+published less than 24 hours ago is not resolved, so DSH installs the newest
+older version and shows a notice. That is a registry policy, not a plugin
+failure, and the spec you paste decides whether it applies:
+
+| Paste into **Add plugin** | Result for a fresh release |
+| --- | --- |
+| `@chad.dev/dsh-adclip` | newest version **older than 24 h** |
+| `@chad.dev/dsh-adclip@0.1.2` | `ERR_PNPM_NO_MATURE_MATCHING_VERSION` |
+| `https://registry.npmjs.org/…/dsh-adclip-0.1.2.tgz` | same error — pnpm looks the package up for its publish time |
+| a tarball URL on **any other host** | installs immediately |
+| absolute path to a downloaded `.tgz` | installs immediately |
+
+So hand users a tarball the day it ships:
+
+```bash
+node scripts/release-tarball.mjs --url-base https://<host>/<path>
+```
+
+It stages the package, writes `dist/chad.dev-dsh-adclip-<version>.tgz`, prints
+the SHA-256, and prints what to paste. Upload that file to a GitHub Release or any
+static host — a non-registry URL skips the age check — and users paste the URL (or
+the downloaded path) into **Add plugin**, then restart DSH.
+
+Alternatives: wait 24 hours until the plain name resolves to it, or add the exact
+version to `minimumReleaseAgeExclude` in
+`~/.dsh/profiles/<profile>/pnpm-workspace.yaml`. That last one is a per-machine
+setting and not something a plugin can ask of its users.
+
 ## First launch
 
 The Host half resolves, in order, an interpreter it can use:
@@ -38,15 +69,88 @@ AdClip page shows **引擎准备中** while this happens, and the Settings tab s
 interpreter, port and any failure. A failure offers **重新启动引擎**, which
 retries the preparation.
 
-Prerequisites:
+## What must exist on the machine
 
-| Tool | When | Install |
-| --- | --- | --- |
-| Python 3.10+ | only when no prepared runtime exists | macOS: `xcode-select --install` or `brew install python@3.12`; Windows: python.org installer or `winget install Python.Python.3.12`; Linux: `apt install python3 python3-venv python3-pip` |
-| ffmpeg + ffprobe | media work (cut, stitch, probe) | macOS: `brew install ffmpeg`; Windows: `winget install Gyan.FFmpeg`; Linux: `apt install ffmpeg` |
+DSH installs the plugin package only. Everything below is resolved at runtime,
+and nothing outside `engine/requirements.txt` is ever installed for the user.
+
+| Dependency | Needed when | Automatic? | Missing looks like |
+| --- | --- | --- | --- |
+| Python 3.10+ | first enable, to build the private venv | no | **引擎不可用：未找到 Python 3.10+…** |
+| `py` launcher (Windows) | same | ships with python.org / winget | only bare `python` and `py` are probed |
+| PyPI reachable | first venv build only | — | **安装引擎依赖失败** (`<data>/.engine/bootstrap.log`) |
+| ffmpeg + ffprobe on `PATH` | every media operation | no | **RuntimeError: ffprobe 不可用：未找到 ffmpeg…** |
+| Writable `%APPDATA%` / data dir | always | — | engine exits on first write |
+| `libx264`, `aac`, `loudnorm`, `xfade`, `testsrc2`, `anullsrc` | encode, stitch, test mode | part of a full ffmpeg build | a run fails late, not at startup |
+| `MINIMAX_API_KEY` (or ARK/Kling) | paid generation | no | generation pages stay empty |
+| DSH `llm` service | script/analysis text | DSH itself | falls back to MiniMax, then demo copy |
+| `faster-whisper` + HuggingFace model (~500 MB) | optional ASR | **no** — not in `requirements.txt` | silent: no transcript, no error |
+| VC++ 2015-2022 runtime | ASR/OCR wheels | no | import error inside the venv |
+| `rapidocr-onnxruntime` | declared in `pyproject.toml` only | no | the engine never imports it |
+
+Platform install commands:
+
+| Tool | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Python 3.10+ | `xcode-select --install` or `brew install python@3.12` | python.org installer (tick *Add python.exe to PATH*) or `winget install --id Python.Python.3.12 -e` | `apt install python3 python3-venv python3-pip` |
+| ffmpeg + ffprobe | `brew install ffmpeg` | `winget install --id Gyan.FFmpeg -e` (full build) | `apt install ffmpeg` |
+
+On Windows, `scripts/install-windows.ps1` does both, puts ffmpeg's `bin` on the
+user `PATH`, and reports the remaining gaps:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -CheckOnly
+powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1
+```
+
+### Windows: install order and the PATH trap
+
+1. Install Python 3.10+ **and** ffmpeg before enabling the plugin, or the first
+   enable spends its time failing instead of building the venv.
+2. Verify in a **new** terminal, not the one that ran `winget`:
+   ```powershell
+   py -0p            # 3.10+ and 3.12 as the default is the happy path
+   where.exe ffmpeg
+   where.exe ffprobe
+   ```
+3. Prefer Python 3.12: 3.13/3.14 occasionally lack prebuilt wheels, so pip falls
+   back to compiling and asks for MSVC Build Tools.
+4. **Quit DSH completely and reopen it** after installing ffmpeg. The engine
+   inherits the Host's environment when it is spawned, and *重新启动引擎* only
+   respawns within that same, stale environment. Refreshing the page is not
+   enough; `ffprobe 不可用` will persist until DSH itself restarts.
+5. Behind a corporate proxy or SSL inspection, set `HTTPS_PROXY` or
+   `PIP_INDEX_URL` (e.g. `https://pypi.tuna.tsinghua.edu.cn/simple`) before the
+   first enable; otherwise pip fails and the engine never boots.
 
 A missing ffmpeg does not stop the engine: the page opens, and Settings shows
-the install command until the tools appear in `PATH`.
+the install command until the tools appear in the *Host's* `PATH`.
+
+## First-run setup page
+
+Opening AdClip for the first time shows a setup page instead of the studio, on
+every platform. It is rendered by the Host half, so it works while Python is
+still missing — the engine cannot report its own absent interpreter.
+
+One row per check: engine sources, Python 3.10+, the private venv, `ffmpeg`,
+`ffprobe`, the data directory, and optional local ASR. A failing row carries the
+platform's install command with a **复制命令** button, a download link, and the
+note that matters on Windows: **quit and reopen DSH after installing**, because
+the running Host keeps the `PATH` it started with. **重新检测** re-runs everything
+without restarting the engine.
+
+The choices live in `<data>/.engine/setup.json`:
+
+- **开始使用** records `doneAt`; the page stops opening by itself.
+- **稍后再说** records `skippedAt`; the studio opens with a warning banner and
+  Settings → **环境检查** brings the page back.
+- If a required dependency disappears later, the page returns on its own unless
+  it was skipped.
+
+The page never installs anything: commands are copied, not executed. That keeps
+the plugin out of elevation prompts, corporate proxies and surprise downloads.
+Checks are implemented once in `plugin/host/preflight.js` and shared by macOS,
+Windows and Linux; only the remediation commands differ.
 
 ## Where things live
 
@@ -62,7 +166,7 @@ the install command until the tools appear in `PATH`.
 ## Upgrades and removal
 
 - **Upgrade**: install the new version over the old one (Plugins → the bundle's
-  page → **Update**, or install `@chad.dev/dsh-adclip@0.1.1`). Data and the venv
+  page → **Update**, or install `@chad.dev/dsh-adclip@0.1.2`). Data and the venv
   survive; the venv is rebuilt only when `requirements.txt` changes.
 - **Remove**: Plugins → the bundle → **Remove**. The engine stops with the
   plugin. `<data>` is left untouched so a later reinstall keeps the history;
@@ -76,10 +180,21 @@ the install command until the tools appear in `PATH`.
 | **引擎不可用：找不到引擎源码** | The package is missing `engine/src/adclip/`. Rebuild it with `node scripts/stage-plugin.mjs`. |
 | **创建 Python 虚拟环境失败** | Install the platform's `python3-venv` package (see the table above), then 重新启动引擎. |
 | **安装引擎依赖失败** | Network or proxy blocked `pip`. Fix it, then 重新启动引擎; `<data>/.engine/bootstrap.log` has pip's output. |
-| **ffmpeg 不可用** | Install ffmpeg, then reopen the page (no restart needed). |
+| **ffmpeg 不可用** | Install ffmpeg, then **quit and reopen DSH** — the engine keeps the `PATH` it was spawned with. |
+| **ffprobe 不可用** but `ffmpeg` works | The bin directory holds one but not the other; install a full ffmpeg build. |
+| **未找到 Python 3.10+** although 3.12 is installed | `py`/`python` resolve to an older default; put the 3.12 directory first on `PATH` or uninstall the old one. |
+| Engine stuck on **引擎准备中** | `<data>/.engine/bootstrap.log`; a pip download over a slow proxy can exceed the 10-minute bootstrap window. |
+| Runs succeed but there is never a transcript | ASR is optional and not installed; `pip install faster-whisper` into `<data>/.engine/venv` and set `HF_ENDPOINT` where HuggingFace is blocked. |
+| Setup page stays on **正在检查环境…** | The Host check threw; restart DSH and look at its log, then 重新检测. |
+| Setup page reappears after 稍后再说 | State could not be written to `<data>/.engine/setup.json` — check the data directory again. |
 | Engine exits right after start | `<data>/.engine/bootstrap.log` and the AdClip Settings tab's engine card. |
 
 ## Publishing to npm
+
+Publishing makes a version available to the registry, but pnpm 11 (and therefore
+DSH) will not install it for 24 hours — see *Installing a version inside pnpm's
+24-hour window*. When a release must be usable immediately, also run
+`node scripts/release-tarball.mjs` and share the tarball URL.
 
 `plugin/` is the package root; `src/adclip/` is the engine. One command stages the
 self-contained package and publishes it under your own npm scope:
