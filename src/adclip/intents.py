@@ -185,9 +185,16 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
         changes.append(_change("inputs.brief", context.get("brief"), f"价格调整为 {value}，其余结构不变", "generate", "价格台词"))
         actions.append("needs_brief_merge")
 
+    # A message scoped to one selected shot with no parameter match is a content
+    # edit for that shot: applying it rewrites just this beat.
+    if req.selected_segment_id and not changes and not actions and not questions and len(text) >= 2:
+        changes.append(_change("segment.rewrite", None, text, "generate", "这一镜：重写台词和画面"))
+
     requires_regen = any(c["stage"] == "generate" for c in changes)
     post_only = bool(changes) and not requires_regen
-    if not changes and not questions and actions:
+    if changes and changes[0]["field"] == "segment.rewrite":
+        reply = "我把这条要求归到选中的这一镜，应用后只重写并重生成这一段。"
+    elif not changes and not questions and actions:
         reply = {"retry": "好，按同参数再生成一条。", "version": "可以切换到上一版。", "stitch": "请选择片段后打开拼接计划。"}.get(actions[0], "我整理成一个动作了，请确认。")
     elif not changes and not questions:
         reply = "我理解为你想调整这条片子。请说具体一点：改台词、换商品/模特、改比例/清晰度、拼接，或只改字幕/音乐。"

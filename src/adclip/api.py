@@ -580,6 +580,21 @@ def replace_segment(run_id: str, segment_id: str) -> JSONResponse:
     return JSONResponse(status_code=202, content={"run": run.model_dump()})
 
 
+@app.post("/runs/{run_id}/segments/{segment_id}/edit")
+def edit_segment(run_id: str, segment_id: str, payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Rewrite one shot from a natural-language note, then regenerate only it."""
+    instruction = str(payload.get("instruction") or "").strip()
+    if len(instruction) < 2:
+        raise HTTPException(status_code=400, detail="instruction is required")
+    try:
+        run = segment_replace.start_edit(run_id, segment_id, instruction)
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+    return JSONResponse(status_code=202, content={"run": run.model_dump()})
+
+
 @app.post("/runs/{run_id}/rollback")
 def rollback_segment(run_id: str) -> dict[str, Any]:
     try:

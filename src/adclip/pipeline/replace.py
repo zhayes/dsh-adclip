@@ -16,7 +16,7 @@ from typing import Any
 from .. import params, store
 from ..media import ffmpeg
 from ..media import stitch as stitch_mod
-from . import generate, qa, segment
+from . import generate, qa, script, segment
 
 
 def _storyboard(run: Any) -> list[dict[str, Any]]:
@@ -141,6 +141,44 @@ def _run_replace(run_id: str, segment_id: str) -> None:
             run.finished_at = store.now()
             store.write_run(run)
         traceback.print_exc()
+
+
+def _run_edit(run_id: str, segment_id: str, instruction: str) -> None:
+    """Rewrite one beat, then regenerate only its slot."""
+    try:
+        run = store.read_run(run_id)
+        if run is None:
+            return
+        seg = _find(run, segment_id)
+        script.rewrite_shot(run, int(seg.get("index") or 0), instruction)
+        segment.build_storyboard(run_id)
+        _run_replace(run_id, segment_id)
+    except Exception as exc:  # noqa: BLE001
+        run = store.read_run(run_id)
+        if run:
+            run.status = "failed"
+            run.error = f"{type(exc).__name__}: {exc}"[:800]
+            run.finished_at = store.now()
+            store.write_run(run)
+        traceback.print_exc()
+
+
+def start_edit(run_id: str, segment_id: str, instruction: str) -> Any:
+    run = store.read_run(run_id)
+    if run is None:
+        raise ValueError("run not found")
+    if run.status == "running":
+        raise ValueError("run is busy")
+    _find(run, segment_id)
+    if run.status != "succeeded":
+        raise ValueError("only a succeeded run can be edited")
+    run.status = "running"
+    run.step = "segment"
+    run.progress = 0.05
+    run.error = None
+    store.write_run(run)
+    threading.Thread(target=_run_edit, args=(run_id, segment_id, instruction), daemon=True, name="adstudio-segment-edit").start()
+    return run
 
 
 def start_replace(run_id: str, segment_id: str) -> Any:

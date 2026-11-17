@@ -1022,10 +1022,14 @@ window.__ModuleLoader__.load({
         if (!changes.length) return
         setBusy('apply'); setErr('')
         try {
-          const path = selected && !postOnly
-            ? '/runs/' + run.id + '/segments/' + selected.id + '/replace'
-            : '/runs/' + run.id + '/derive'
-          const data = await api(path, { method: 'POST', body: { changes } })
+          const rewrite = changes.find((c) => c.field === 'segment.rewrite' && selected)
+          const path = rewrite
+            ? '/runs/' + run.id + '/segments/' + selected.id + '/edit'
+            : selected && !postOnly
+              ? '/runs/' + run.id + '/segments/' + selected.id + '/replace'
+              : '/runs/' + run.id + '/derive'
+          const body = rewrite ? { instruction: String(rewrite.to) } : { changes }
+          const data = await api(path, { method: 'POST', body })
           setChanges([]); setChat([])
           onChanged && onChanged(data.run)
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
@@ -1351,7 +1355,7 @@ window.__ModuleLoader__.load({
                   onKeyDown: (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); start() } }
                 }),
                 h('div', { className: 'adp-brief-foot' },
-                  h('span', null, '写产品、卖点、价格、想保留/想改的地方。'),
+                  h('span', null, '写产品、卖点、价格、想保留/想改的地方；要原样念的台词用「」括起来。'),
                   h('div', { className: 'adp-row', style: { gap: 8 } },
                     h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
                     dshReady ? h('button', { className: 'adp-btn', onClick: polish, disabled: polishBusy, title: '用 DSH 已配置模型润色需求' }, polishBusy ? '润色中…' : 'DSH 润色') : null,

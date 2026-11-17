@@ -32,6 +32,9 @@ def check(run_id: str) -> dict[str, Any]:
     storyboard = store.read_json(store.run_dir(run_id) / "artifacts" / "storyboard.json", {}) or {}
     beats = storyboard.get("segments") or []
     add("segments", "分镜", "pass" if beats else "warn", {"count": len(beats)})
+    script_doc = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
+    if run.scenario == "viral-remake" and (script_doc.get("source") or {}).get("degraded"):
+        add("script", "台词", "warn", {"degraded": True}, "文字模型不可用，台词未由模型生成；重试可补")
     failed = [c for c in checks if c["status"] == "fail"]
     warned = [c for c in checks if c["status"] == "warn"]
     report = {
