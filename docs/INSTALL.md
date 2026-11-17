@@ -19,7 +19,7 @@ installing it needs no checkout, no `pip install`, and no path configuration.
 
 Step 5 is not optional for a first install: the Web UI's client-module graph is
 composed when the Host starts, so a bundle enabled in a running Host has no
-sidebar entry until the next start. After the restart, **Ad+** appears in the
+sidebar entry until the next start. After the restart, **AdClip** appears in the
 sidebar.
 
 ## First launch
@@ -34,7 +34,7 @@ The Host half resolves, in order, an interpreter it can use:
 
 On a machine without the first two, the first launch creates the venv and runs
 `pip install -r engine/requirements.txt` (about 20–60 s, network needed). The
-Ad+ page shows **引擎准备中** while this happens, and the Settings tab shows the
+AdClip page shows **引擎准备中** while this happens, and the Settings tab shows the
 interpreter, port and any failure. A failure offers **重新启动引擎**, which
 retries the preparation.
 
@@ -62,7 +62,7 @@ the install command until the tools appear in `PATH`.
 ## Upgrades and removal
 
 - **Upgrade**: install the new version over the old one (Plugins → the bundle's
-  page → **Update**, or install `@chad.dev/dsh-adclip@0.2.0`). Data and the venv
+  page → **Update**, or install `@chad.dev/dsh-adclip@0.1.1`). Data and the venv
   survive; the venv is rebuilt only when `requirements.txt` changes.
 - **Remove**: Plugins → the bundle → **Remove**. The engine stops with the
   plugin. `<data>` is left untouched so a later reinstall keeps the history;
@@ -77,7 +77,7 @@ the install command until the tools appear in `PATH`.
 | **创建 Python 虚拟环境失败** | Install the platform's `python3-venv` package (see the table above), then 重新启动引擎. |
 | **安装引擎依赖失败** | Network or proxy blocked `pip`. Fix it, then 重新启动引擎; `<data>/.engine/bootstrap.log` has pip's output. |
 | **ffmpeg 不可用** | Install ffmpeg, then reopen the page (no restart needed). |
-| Engine exits right after start | `<data>/.engine/bootstrap.log` and the Ad+ Settings tab's engine card. |
+| Engine exits right after start | `<data>/.engine/bootstrap.log` and the AdClip Settings tab's engine card. |
 
 ## Publishing to npm
 

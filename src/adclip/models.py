@@ -1,4 +1,4 @@
-"""Pydantic contracts for Ad+ Studio.
+"""Pydantic contracts for AdClip.
 
 The service deliberately keeps one user-visible object: a Run. A Run owns its
 storyboard, segments, versions and artifacts. There is no project/version/shot
@@ -95,7 +95,7 @@ class Run(BaseModel):
     storyboard: list[StoryboardSegment] = Field(default_factory=list)
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
-    demo: bool = True
+    demo: bool = False
     cancel_requested: bool = False
     created_at: str = ""
     finished_at: Optional[str] = None

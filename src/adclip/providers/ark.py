@@ -2,7 +2,7 @@
 
 This is intentionally small: create a content-generation task, poll it, download
 the result. It is implemented against the official Ark REST shape used by the
-existing AdPlus tooling, but is marked unverified until a real key is available.
+existing tooling, but is marked unverified until a real key is available.
 """
 from __future__ import annotations
 

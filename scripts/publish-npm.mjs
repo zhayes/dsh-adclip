@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Publish the Ad+ Studio plugin package to npm.
+/** Publish the AdClip plugin package to npm.
  *
  * Stages the self-contained package (engine included), then publishes it with
  * public access. The package name defaults to the npm account's own scope,

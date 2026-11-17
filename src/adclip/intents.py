@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import catalog
 from .models import AssistantRequest
 
 
@@ -65,15 +66,21 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
             changes.append(_change("advanced.duration", advanced.get("duration"), duration, "generate", "时长"))
             advanced["duration"] = duration
 
-    # model
+    # model: a vendor keyword selects that vendor's first usable model, never a
+    # hardcoded id, so new models from the same provider are picked up.
+    vendor = None
     if re.search(r"可灵|kling", text, re.I):
-        changes.append(_change("advanced.model", advanced.get("model"), "kling.v3", "generate", "模型"))
-    elif re.search(r"seedance|方舟", text, re.I):
-        changes.append(_change("advanced.model", advanced.get("model"), "ark.seedance-2.5", "generate", "模型"))
-    elif re.search(r"minimax|海螺", text, re.I):
-        changes.append(_change("advanced.model", advanced.get("model"), "minimax.hailuo-2.3-fast", "generate", "模型"))
-    elif re.search(r"demo|演示", text, re.I):
-        changes.append(_change("advanced.model", advanced.get("model"), "demo", "generate", "模型"))
+        vendor = "kling"
+    elif re.search(r"seedance|方舟|ark", text, re.I):
+        vendor = "ark"
+    elif re.search(r"minimax|海螺|hailuo", text, re.I):
+        vendor = "minimax"
+    if vendor:
+        candidate = next((row for row in catalog.rows()
+                          if row["kind"] == "video" and row["provider"] == vendor
+                          and row.get("available") and row.get("enabled")), None)
+        if candidate is not None:
+            changes.append(_change("advanced.model", advanced.get("model"), candidate["id"], "generate", "模型"))
 
     # generation mode
     if re.search(r"精细|逐镜|分段", text):
@@ -131,12 +138,24 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
         changes.append(_change("persona.ethnicity", persona.get("ethnicity"), ethnicity, "generate", "模特族裔"))
         persona["ethnicity"] = ethnicity
 
-    # post-only
-    if re.search(r"字幕", text) and re.search(r"大|放大", text):
+    # post-only: subtitle delivery is a switch, so judge on/off before the size words
+    subtitle_toggled = False
+    current_subtitle = str(advanced.get("subtitle") or "off")
+    if re.search(r"字幕", text) and re.search(r"关闭|关掉|不要|不用|去掉|取消|不启用|别加|无字幕", text):
+        subtitle_toggled = True
+        if current_subtitle != "off":
+            changes.append(_change("post.subtitle", current_subtitle, "off", "post", "字幕"))
+            advanced["subtitle"] = "off"
+    elif re.search(r"字幕", text) and re.search(r"开启|打开|加上|加个|要字幕|带字幕|加字幕|启用", text):
+        subtitle_toggled = True
+        if current_subtitle != "sidecar":
+            changes.append(_change("post.subtitle", current_subtitle, "sidecar", "post", "字幕"))
+            advanced["subtitle"] = "sidecar"
+    if not subtitle_toggled and re.search(r"字幕", text) and re.search(r"大|放大", text):
         size = int(post.get("subtitle_size") or 32) + 4
         changes.append(_change("post.subtitle_size", post.get("subtitle_size"), size, "post", "字幕字号"))
         post["subtitle_size"] = size
-    if re.search(r"字幕", text) and re.search(r"小", text):
+    if not subtitle_toggled and re.search(r"字幕", text) and re.search(r"小", text):
         size = max(16, int(post.get("subtitle_size") or 32) - 4)
         changes.append(_change("post.subtitle_size", post.get("subtitle_size"), size, "post", "字幕字号"))
         post["subtitle_size"] = size

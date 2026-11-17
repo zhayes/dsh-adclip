@@ -1,6 +1,6 @@
 /** Read the host's configured LLM catalogue and, optionally, run a text call.
  *
- * DSH already owns model routing and credentials. Ad+ should not ask the user
+ * DSH already owns model routing and credentials. AdClip should not ask the user
  * to re-enter an LLM key for copy/analysis when a DSH model is configured.
  * Video generation is different: DSH exposes LLM calls, not video tasks.
  */

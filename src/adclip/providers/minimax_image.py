@@ -23,10 +23,13 @@ def generate(
     aspect: str = "1:1",
     area: str = "2K",
     output: Path,
+    reference: Path | None = None,
 ) -> dict:
     key = _api_key()
     if not key:
         raise RuntimeError("未配置 MINIMAX_API_KEY")
+    # H3 Image is text-to-image only; `reference` exists so the runner can call
+    # every adapter with one signature.
     body = {
         "model": model,
         "prompt": prompt,

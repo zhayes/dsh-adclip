@@ -1,64 +1,45 @@
-"""Image-generation model catalogue.
+"""Image-model view over the shared catalogue.
 
-Deliberately separate from the video catalogue: video models are not image
-models, and image models do not participate in the video model enable list.
+Image rows live in `catalog.py` next to the video rows; this module keeps the
+image-shaped helpers the image pipeline imports.
 """
 from __future__ import annotations
 
-import os
-import time
 from typing import Any
 
-IMAGE_MODELS: list[dict[str, Any]] = [
-    {
-        "id": "minimax.h3-image",
-        "provider": "minimax",
-        "model": "MiniMax-H3-Image",
-        "label": "MiniMax H3 Image",
-        "aspects": ["1:1", "3:4", "4:3", "9:16", "16:9"],
-        "areas": ["1K", "2K", "4K"],
-        "default_area": "2K",
-        "requires": ["MINIMAX_API_KEY"],
-        "available": False,
-        "reason": "配置 MINIMAX_API_KEY 后可用",
-        "tags": ["文生图", "MiniMax"],
-    },
-    {
-        "id": "minimax.h3-image-highspeed",
-        "provider": "minimax",
-        "model": "MiniMax-H3-Image-Highspeed",
-        "label": "MiniMax H3 Image Highspeed",
-        "aspects": ["1:1", "3:4", "4:3", "9:16", "16:9"],
-        "areas": ["1K", "2K", "4K"],
-        "default_area": "2K",
-        "requires": ["MINIMAX_API_KEY"],
-        "available": False,
-        "reason": "配置 MINIMAX_API_KEY 后可用",
-        "tags": ["文生图", "快速"],
-    },
-]
+from . import catalog as model_catalog
+
+
+def catalog_rows() -> list[dict[str, Any]]:
+    return model_catalog.for_kind("image")
 
 
 def catalog() -> list[dict[str, Any]]:
-    available = bool(os.environ.get("MINIMAX_API_KEY", "").strip())
-    rows = []
-    for row in IMAGE_MODELS:
-        item = dict(row)
-        item["available"] = available
-        if available:
-            item["reason"] = "MiniMax key 已配置；生成时按账号权限为准"
-        item["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        rows.append(item)
-    return rows
+    return model_catalog.for_kind("image")
 
 
 def get_model(model_id: str) -> dict[str, Any] | None:
-    for row in catalog():
-        if row["id"] == model_id:
-            return row
-    return None
+    row = model_catalog.get(model_id)
+    return row if row and row["kind"] == "image" else None
 
 
 def default_model() -> str:
-    rows = [row for row in catalog() if row["available"]]
-    return rows[0]["id"] if rows else ""
+    return model_catalog.default_model("image", "text_to_image")
+
+
+def size_for(area: str, aspect: str) -> str:
+    """Pixel size for providers that take explicit dimensions, not presets.
+
+    The short edge follows the area (1K/2K/4K); the other edge keeps the aspect
+    ratio and lands on a multiple of 16, which every image API we target accepts.
+    """
+    short = {"1K": 1024, "2K": 2048, "4K": 4096}.get(str(area).upper(), 2048)
+    ratios = {"1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "16:9": (16, 9), "9:16": (9, 16)}
+    width_units, height_units = ratios.get(aspect, (1, 1))
+    if width_units >= height_units:
+        width = short
+        height = round(short * height_units / width_units / 16) * 16
+    else:
+        height = short
+        width = round(short * width_units / height_units / 16) * 16
+    return f"{max(16, width)}x{max(16, height)}"

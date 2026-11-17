@@ -82,8 +82,9 @@ writeFileSync(path.join(outDir, 'package.json'), JSON.stringify(manifest, null, 
 
 const packageReadme = `# ${packageName}
 
-Ad+ Studio as a DSH profile bundle: ad-video scenarios (viral remake, text to
-video, storyboard edits, stitching, personas, assets) inside the Harness Web UI.
+AdClip is a DSH profile bundle for AI ad videos up to 30 seconds: viral remakes,
+text to video, text to image, storyboard edits, stitching, personas and assets,
+all inside the Harness Web UI.
 
 ## Install in DSH
 
@@ -96,14 +97,13 @@ appears after that restart.
 
 ## First launch
 
-The Host half ships the Python engine and prepares a private virtualenv under
-the Ad+ data directory on first launch (20–60 s, needs network). Python 3.10+
-is only required when that venv has to be built; ffmpeg/ffprobe are required for
-media work. Both are explained in the plugin's Settings tab when missing.
+The Host half ships the Python engine and prepares a private virtualenv on first
+launch (20–60 s, needs network). Python 3.10+ is only required when that venv
+has to be built; ffmpeg/ffprobe are required for media work. Both are explained
+in the plugin's Settings tab when missing.
 
-Data: \`~/Library/Application Support/AdPlusStudio/data\` (macOS),
-\`%APPDATA%/AdPlusStudio/data\` (Windows), \`~/.local/share/adplus-studio/data\`
-(Linux). Removing the plugin leaves that directory in place.
+Run history, assets and keys live in the plugin's own data directory, shown in
+Settings → 打开数据文件夹. Removing the plugin leaves it in place.
 
 ## Upgrade
 

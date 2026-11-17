@@ -55,7 +55,7 @@ export function registerProxy(ctx, supervisor, dsh) {
     // without one so a freshly installed bundle works before the page refresh;
     // a wrong token is always rejected.
     if (token && supervisor.token && token !== supervisor.token) {
-      writeJson(res, 401, { error: { code: 'unauthorized', message: 'refresh the page to refresh the Ad+ token' } })
+      writeJson(res, 401, { error: { code: 'unauthorized', message: 'refresh the page to refresh the AdClip token' } })
       return
     }
     if (!token && !loopback) {

@@ -1,4 +1,4 @@
-"""FastAPI surface for Ad+ Studio.
+"""FastAPI surface for AdClip.
 
 No pricing, quotes or billing endpoints exist. The first slice runs a local
 demo pipeline so the DSH UI, storyboard, edits, personas and stitching can be
@@ -19,13 +19,16 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from . import catalog as model_catalog
 from . import image_params, intents, llm, params, personas, settings, store
 from .providers import discovery
 from .media import ffmpeg
 from .media import stitch as stitch_mod
+from .media import subtitles
 from .models import AssistantRequest, Run, RunStep, StitchRequest
 from .pipeline import image_runner
 from .pipeline import replace as segment_replace
+from .pipeline import qa as qa_pipeline
 from .pipeline import runner, segment
 
 @asynccontextmanager
@@ -37,8 +40,8 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Ad+ Studio", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.0"
+app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
+VERSION = "0.1.1"
 
 
 def _media_type(path: Path) -> str:
@@ -71,7 +74,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "adclip",
         "version": VERSION,
-        "demo": True,
+        "demo": False,
         "data": str(store.DATA),
         "models": len(models),
         "available_models": [row["id"] for row in models if row.get("available")],
@@ -90,8 +93,15 @@ def scenarios() -> dict[str, Any]:
 
 
 @app.get("/models")
-def models() -> dict[str, Any]:
-    return {"models": params.catalog()}
+def models(kind: str = "", capability: str = "") -> dict[str, Any]:
+    rows = model_catalog.rows()
+    if kind:
+        rows = [row for row in rows if row["kind"] == kind]
+    if capability:
+        rows = [row for row in rows if capability in (row.get("capabilities") or [])]
+    return {"models": rows, "kinds": sorted({row["kind"] for row in rows}),
+            "capabilities": {kind_name: sorted({cap for row in rows if row["kind"] == kind_name for cap in row["capabilities"]})
+                             for kind_name in sorted({row["kind"] for row in rows})}}
 
 
 @app.post("/assets/upload")
@@ -149,19 +159,19 @@ def media(path: str) -> FileResponse:
 # ---------------------------------------------------------------------------
 @app.get("/settings/models")
 def get_settings_models() -> dict[str, Any]:
-    return {"enabled": settings.enabled_models(), "models": params.catalog()}
+    return {"enabled": settings.enabled_models(), "models": model_catalog.rows()}
 
 
 @app.post("/settings/models")
 def set_settings_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    valid = {str(row["id"]) for row in params.catalog()}
+    valid = {str(row["id"]) for row in model_catalog.rows()}
     enabled = []
     for value in payload.get("enabled") or []:
         value = str(value or "").strip()
         if value in valid and value not in enabled:
             enabled.append(value)
     settings.set_enabled_models(enabled)
-    return {"enabled": enabled, "models": params.catalog()}
+    return {"enabled": enabled, "models": model_catalog.rows()}
 
 
 @app.get("/models/discover")
@@ -263,7 +273,7 @@ def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any],
         parent_run_id=parent.id if parent else None,
         version=(parent.version + 1) if parent else 1,
         changes=changes or [],
-        demo=True,
+        demo=False,
     )
     store.write_run(run)
     runner.manager.start(run.id)
@@ -298,6 +308,7 @@ def create_image(payload: dict[str, Any] = Body(...)) -> JSONResponse:
             model_id=str(payload.get("model") or ""),
             aspect=str(payload.get("aspect") or "1:1"),
             area=str(payload.get("area") or "2K"),
+            reference_asset_id=str(payload.get("reference_asset_id") or ""),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -448,13 +459,21 @@ def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
     root = store.run_dir(run_id) / "artifacts"
     root.mkdir(parents=True, exist_ok=True)
     src = store.run_dir(parent.id) / "artifacts"
-    for name in ("script.json", "skeleton.json", "storyboard.json", "qa.json", "subtitles.srt"):
+    for name in ("script.json", "skeleton.json", "storyboard.json", "qa.json"):
         source = src / name
         if source.is_file():
             shutil.copy2(source, root / name)
     advanced = copy.deepcopy(parent.advanced)
     inputs = copy.deepcopy(parent.inputs)
     _apply_changes(advanced, inputs, changes)
+    # The SRT follows the post-processed run's own setting, regenerated from the
+    # script that came over with the parent.
+    script = store.read_json(store.run_dir(parent.id) / "artifacts" / "script.json", {}) or {}
+    srt_target = root / "subtitles.srt"
+    if str(advanced.get("subtitle") or "off") == "sidecar":
+        subtitles.write_srt(script, srt_target)
+    else:
+        srt_target.unlink(missing_ok=True)
     bitrate = str(advanced.get("export_bitrate") or "8M")
     fps = int(advanced.get("fps") or 30)
     source_video = src / "final.mp4"
@@ -471,7 +490,10 @@ def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
     )
     notes = []
     if any(str((c.get("field") or "")).startswith("post.subtitle") for c in changes):
-        notes.append("当前 ffmpeg 不支持烧录字幕，字幕仍以 SRT 旁挂文件交付")
+        if str(advanced.get("subtitle") or "off") == "sidecar":
+            notes.append("字幕已改为 SRT 旁挂文件（画面不烧录）")
+        else:
+            notes.append("字幕已关闭，本次不生成 SRT")
     if any(str((c.get("field") or "")).startswith("post.music") for c in changes):
         notes.append("音乐替换尚未接入；本次未改动音轨")
     run = Run(
@@ -508,7 +530,13 @@ def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
         changes=changes,
     )
     store.write_run(run)
-    return run
+    # The copied QA report described the parent's artifact set; re-check so a
+    # subtitle toggle shows up as the new run's own verdict.
+    report = qa_pipeline.check(run_id)
+    reloaded = store.read_run(run_id) or run
+    reloaded.result = {**(reloaded.result or {}), "qa": report}
+    store.write_run(reloaded)
+    return reloaded
 
 
 @app.post("/runs/{run_id}/derive")
@@ -629,7 +657,7 @@ def stitch(payload: StitchRequest) -> dict[str, Any]:
         advanced={"stitch": payload.model_dump()},
         steps=[],
         result={"video": record["path"], "asset_id": record["id"], "duration_s": record.get("duration_s"), "warnings": plan.get("warnings") or []},
-        demo=True,
+        demo=False,
         created_at=store.now(),
         finished_at=store.now(),
     )

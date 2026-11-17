@@ -15,6 +15,11 @@ The engine is new code under `src/adclip/`. It does not import `adplus`,
 `demo` provider so the full UI, storyboard, edits, personas and stitching can be
 exercised without paid credentials. Real provider adapters are the next step.
 
+Post production normalizes the clip and decides subtitles from the run's own
+setting: `advanced.subtitle = "off"` (default) delivers no SRT at all, while
+`"sidecar"` writes `artifacts/subtitles.srt`. Subtitles are never burned in —
+the shipped ffmpeg build has no libass/drawtext.
+
 Key constraints:
 - No pricing/quote/billing code or UI.
 - No TTS/Wav2Lip; native-audio models are the target.

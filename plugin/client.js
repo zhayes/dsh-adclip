@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
 .adp-eyebrow{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#C99B54;margin-bottom:5px}
 .adp-title{font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-.5px;margin:0}
 .adp-lede{color:var(--dsw-alias-label-secondary);font-size:12.5px;margin:6px 0 0;max-width:620px}
+.adp-lede.adp-nowrap{max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .adp-page-meta{display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-secondary);font-size:11px;padding-bottom:2px}
 .adp-panel{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
 .adp-panel-grid{display:grid;grid-template-columns:360px minmax(0,1fr)}
@@ -114,6 +115,8 @@ window.__ModuleLoader__.load({
 .adp-select{min-width:84px}
 .adp-error{color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:1.45;white-space:pre-wrap}
 .adp-badge{font:10px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;border-radius:999px;padding:2px 7px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);letter-spacing:.02em}
+.adp-caps{display:inline-flex;gap:4px;flex-wrap:wrap}
+.adp-cap{font-size:10px;line-height:1.5;padding:0 5px;border-radius:4px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);white-space:nowrap}
 .adp-badge.ok{color:var(--dsw-alias-state-success-primary);border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 55%,transparent)}
 .adp-badge.warn{color:var(--dsw-alias-state-warn-primary);border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 55%,transparent)}
 .adp-badge.bad{color:var(--dsw-alias-state-error-primary);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 55%,transparent)}
@@ -214,6 +217,13 @@ window.__ModuleLoader__.load({
 .adp-text-model>span{font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.05em;color:#C99B54;white-space:nowrap}
 .adp-text-model .adp-select{height:32px;max-width:220px;font-size:11px;min-width:120px}
 .adp-model-select{height:32px;min-width:180px;max-width:260px;font-size:11px}
+.adp-ref-upload{position:relative;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:7px;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:pointer;overflow:hidden;max-width:260px}
+.adp-ref-upload:hover{border-color:#C99B54;color:var(--dsw-alias-label-primary)}
+.adp-ref-upload.has{border-style:solid;padding:0 6px 0 4px}
+.adp-ref-chip{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.adp-ref-chip img{width:24px;height:24px;border-radius:4px;object-fit:cover;flex:0 0 auto}
+.adp-ref-name{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 .adp-advanced-panel{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);padding:13px 15px;margin-top:10px}
 .adp-settings-page .adp-section-head{margin-top:16px}
 .adp-dsh-line{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-1);padding:9px 11px}
@@ -495,13 +505,45 @@ window.__ModuleLoader__.load({
       const duration = Number((source.match(/(\d{1,2})\s*(?:秒|s|sec)(?!\w)/i) || [])[1] || 0)
       const resolution = (source.match(/(1080p|720p|480p|2k)/i) || [])[1] || ''
       const mode = /(精细|分段|分镜)/.test(source) ? 'fine' : ''
-      return { aspect, duration: duration || 0, resolution: resolution ? resolution.toLowerCase().replace('2k', '1080p') : '', mode }
+      // Subtitles are a sidecar SRT switch. Judge the "off" phrasings first so
+      // "不要字幕" never reads as "字幕".
+      let subtitle = ''
+      if (/字幕/.test(source)) {
+        if (/(不要|不启用|不用|去掉|关闭|关掉|取消|别加|无)字幕|字幕(不要|关掉|关闭|去掉|不用)/.test(source)) subtitle = 'off'
+        else if (/(加|开|要|带|生成|启用)字幕|字幕(打开|开启)/.test(source)) subtitle = 'sidecar'
+      }
+      const vendor = /可灵|kling/i.test(source) ? 'kling'
+        : /seedance|方舟|ark/i.test(source) ? 'ark'
+          : /minimax|海螺|hailuo/i.test(source) ? 'minimax' : ''
+      return { aspect, duration: duration || 0, resolution: resolution ? resolution.toLowerCase().replace('2k', '1080p') : '', mode, subtitle, vendor }
+    }
+
+    /** First usable model from a vendor named in the brief, or '' when none. */
+    function modelForVendor(vendor, models) {
+      if (!vendor) return ''
+      const row = (models || []).find((m) => m.kind === 'video' && m.provider === vendor && m.available && m.enabled !== false)
+      return row ? row.id : ''
+    }
+
+    /** Default video model: first usable one, dialogue-capable first for remakes. */
+    function defaultModelId(models, needsDialogue) {
+      const rows = (models || []).filter((m) => m.kind === 'video' && m.available && m.enabled !== false && (m.capabilities || []).includes('text_to_video'))
+      const real = rows.filter((m) => m.provider !== 'synthetic')
+      const pool = real.length ? real : rows
+      const withAudio = needsDialogue ? pool.filter((m) => m.native_audio) : pool
+      const pick = (withAudio.length ? withAudio : pool)[0]
+      return pick ? pick.id : ''
+    }
+
+    /** How the subtitle setting reads in the UI. */
+    function subtitleLabel(value) {
+      return value === 'sidecar' ? 'SRT 旁挂' : '不启用'
     }
 
     async function parseIntentWithDsh(brief, textModel) {
       try {
         const data = await api('/dsh/chat', { method: 'POST', body: {
-          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、generation_mode（fast|fine 或 null）、stitch（布尔，用户是否想把附件视频拼接）、reason（一句话）。只按用户明确表达解析，不要猜。',
+          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、generation_mode（fast|fine 或 null）、subtitle（off|sidecar|null，是否交付 SRT 旁挂字幕）、model_vendor（kling|ark|minimax|null，用户点名的厂商）、stitch（布尔，用户是否想把附件视频拼接）、reason（一句话）。只按用户明确表达解析，不要猜。',
           messages: [{ role: 'user', content: [{ type: 'text', text: String(brief || '').slice(0, 1000) }] }],
           maxTokens: 500,
           provider: textModel && textModel.provider,
@@ -515,11 +557,14 @@ window.__ModuleLoader__.load({
         const aspects = ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9']
         const resolutions = ['480p', '720p', '1080p']
         const duration = Number(value.duration)
+        const vendors = ['kling', 'ark', 'minimax']
         return {
           aspect: aspects.includes(value.aspect) ? value.aspect : '',
           duration: Number.isFinite(duration) && duration >= 1 && duration <= 30 ? duration : 0,
           resolution: resolutions.includes(String(value.resolution || '').toLowerCase()) ? String(value.resolution).toLowerCase() : '',
           mode: value.generation_mode === 'fine' ? 'fine' : '',
+          subtitle: ['off', 'sidecar'].includes(value.subtitle) ? value.subtitle : '',
+          vendor: vendors.includes(String(value.model_vendor || '')) ? String(value.model_vendor) : '',
           stitch: Boolean(value.stitch),
         }
       } catch (e) { return null }
@@ -527,6 +572,21 @@ window.__ModuleLoader__.load({
 
     function Badge({ status, children }) {
       return h('span', { className: 'adp-badge ' + (status || '') }, children)
+    }
+
+    const CAPABILITY_LABELS = {
+      text_to_video: '文生视频', image_to_video: '图生视频', reference_to_video: '参考视频',
+      text_to_image: '文生图', image_to_image: '图生图',
+    }
+
+    /** One small chip per declared capability. */
+    function CapabilityChip({ capability }) {
+      return h('span', { className: 'adp-cap' }, CAPABILITY_LABELS[capability] || capability)
+    }
+
+    function CapabilityChips({ row }) {
+      const caps = (row && row.capabilities) || []
+      return h('span', { className: 'adp-caps' }, caps.map((cap) => h(CapabilityChip, { key: cap, capability: cap })))
     }
 
     /** Short label for the supervisor's bootstrap stage. */
@@ -757,19 +817,22 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AdvancedRow({ value, onChange, models }) {
+    function AdvancedRow({ value, onChange, models, needsDialogue }) {
       const v = value || {}
       const set = (key, val) => onChange(Object.assign({}, v, { [key]: val }))
-      const modelOptions = [{ value: 'auto', label: 'Auto · 自动选择' }].concat((models || []).filter(m => m.available && m.enabled !== false).map(m => ({ value: m.id, label: m.label })))
+      const usableModels = (models || []).filter(m => m.available && m.enabled !== false)
+      const modelOptions = usableModels.map(m => ({ value: m.id, label: m.label }))
+      const currentModel = modelOptions.some(o => o.value === v.model) ? v.model : (modelOptions[0] ? modelOptions[0].value : '')
       return h('div', { className: 'adp-col', style: { gap: 9 } },
         h('div', { className: 'adp-field-grid g3' },
           h(FormSelect, { label: '模式', value: v.generation_mode || 'fast', onChange: (x) => set('generation_mode', x), options: [{ value: 'fast', label: '快速 · 整条' }, { value: 'fine', label: '精细 · 分段' }] }),
           h(FormSelect, { label: '时长（秒）', value: v.duration || 12, onChange: (x) => set('duration', Number(x)), options: [5, 8, 10, 12, 15, 30] }),
           h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] })
         ),
-        h('div', { className: 'adp-field-grid g2' },
+        h('div', { className: 'adp-field-grid g3' },
           h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] }),
-          h(FormSelect, { label: '模型', value: v.model || 'auto', onChange: (x) => set('model', x), options: modelOptions })
+          h(FormSelect, { label: '模型', value: currentModel, onChange: (x) => set('model', x), options: modelOptions }),
+          h(FormSelect, { label: '字幕', value: v.subtitle || 'off', onChange: (x) => set('subtitle', x), options: [{ value: 'off', label: '不启用' }, { value: 'sidecar', label: 'SRT 旁挂' }] })
         )
       )
     }
@@ -990,7 +1053,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'adp-h1' }, run.title || '成片'),
             h('div', { className: 'adp-small adp-muted' }, 'v' + (run.version || 1) + ' · ' + (adv.aspect || '9:16') + ' · ' + (adv.resolution || '720p') + (result.duration_s ? ' · ' + fmt(result.duration_s) : ''))
           ),
-          h('div', { className: 'adp-result-badges' }, h(StatusBadge, { status: run.status }), run.demo ? h(Badge, null, 'Demo') : h(Badge, { status: 'ok' }, '原生对白'))
+          h('div', { className: 'adp-result-badges' }, h(StatusBadge, { status: run.status }))
         ),
         run.error ? h('div', { className: 'adp-error' }, run.error) : null,
         h('div', { className: 'adp-result-grid' },
@@ -1117,8 +1180,7 @@ window.__ModuleLoader__.load({
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
       const [textModel, setTextModel] = useState(null)
-      const [rights, setRights] = useState(false)
-      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 12, aspect: '9:16', resolution: '720p', model: 'auto' })
+      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 12, aspect: '9:16', resolution: '720p', model: '' })
       const [touched, setTouched] = useState({})
       const [detected, setDetected] = useState(() => Object.assign(detectVideoParams(''), { stitch: false }))
       const [persona, setPersona] = useState({ gender: 'any', age: 'youth', body_type: 'standard', ethnicity: 'asian' })
@@ -1128,31 +1190,38 @@ window.__ModuleLoader__.load({
       const [personaBusy, setPersonaBusy] = useState(false)
       const [polishBusy, setPolishBusy] = useState(false)
       const [err, setErr] = useState('')
-      const hasRealModel = (models || []).some(m => m.available && m.enabled !== false && m.id !== 'demo')
+      const usableModels = (models || []).filter((m) => m.available && m.enabled !== false)
+      const hasRealModel = usableModels.length > 0
       const selectedModel = (models || []).find((m) => m.id === advanced.model)
-      const imageOnly = Boolean(selectedModel && !(selectedModel.modes || []).includes('text_to_video'))
+      const imageOnly = Boolean(selectedModel && !(selectedModel.capabilities || []).includes('text_to_video'))
+      useEffect(() => {
+        setAdvanced((prev) => {
+          const usable = (models || []).filter((m) => m.available && m.enabled !== false)
+          if (prev.model && usable.some((m) => m.id === prev.model)) return prev
+          const pick = defaultModelId(models, true)
+          return pick ? Object.assign({}, prev, { model: pick }) : prev
+        })
+      }, [models])
       const selectedTextModel = textModel || defaultDshTextModel(dsh)
       const selectedPersona = (personas || []).find((p) => p.id === personaId)
       const dshReady = Boolean(dsh && dsh.available && (dsh.providers || []).length)
       useEffect(() => { setDetected(Object.assign(detectVideoParams(brief), { stitch: /(拼接|拼起来|拼成|接起来|接到一起|合并|组合|连起来|插入|顺序拼|前后拼)/.test(brief) })) }, [brief])
       const changeAdvanced = (next) => {
         const changed = {}
-        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode']) {
+        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode', 'subtitle']) {
           if (next[key] !== advanced[key]) changed[key] = true
         }
         if (Object.keys(changed).length) setTouched((prev) => Object.assign({}, prev, changed))
         setAdvanced(next)
       }
-      const manualFields = []
-      if (touched.aspect) manualFields.push('比例')
-      if (touched.duration) manualFields.push('时长')
-      if (touched.resolution) manualFields.push('清晰度')
-      if (touched.generation_mode) manualFields.push('模式')
-      const conflicts = []
-      if (touched.aspect && detected.aspect && detected.aspect !== advanced.aspect) conflicts.push('比例手动 ' + advanced.aspect + ' 覆盖描述 ' + detected.aspect)
-      if (touched.duration && detected.duration && Number(detected.duration) !== Number(advanced.duration)) conflicts.push('时长手动 ' + advanced.duration + 's 覆盖描述 ' + detected.duration + 's')
-      if (touched.resolution && detected.resolution && detected.resolution !== advanced.resolution) conflicts.push('清晰度手动 ' + advanced.resolution + ' 覆盖描述 ' + detected.resolution)
-      if (touched.generation_mode && detected.mode && detected.mode !== advanced.generation_mode) conflicts.push('模式手动覆盖描述识别')
+      // The brief wins: every parameter it names replaces the control value, and
+      // the list below says exactly what will change before the run starts.
+      const overrides = []
+      if (detected.aspect && detected.aspect !== advanced.aspect) overrides.push('比例 ' + detected.aspect + '（控件 ' + advanced.aspect + '）')
+      if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
+      if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
+      if (detected.mode && detected.mode !== advanced.generation_mode) overrides.push('模式 精细（控件 快速）')
+      if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
       const savePersona = async () => {
         setPersonaBusy(true); setErr('')
         try {
@@ -1164,7 +1233,6 @@ window.__ModuleLoader__.load({
       const start = async () => {
         if (!refAsset) { setErr('请先上传参考视频'); return }
         if (imageOnly && !products.length) { setErr('当前模型是图生视频，请先上传至少一张商品图'); return }
-        if (!rights) { setErr('请确认有权使用这条参考视频'); return }
         setBusy(true); setErr('')
         try {
           let smart = null
@@ -1175,13 +1243,18 @@ window.__ModuleLoader__.load({
             if (smart.duration) next.duration = smart.duration
             if (smart.resolution) next.resolution = smart.resolution
             if (smart.mode) next.mode = smart.mode
+            if (smart.subtitle) next.subtitle = smart.subtitle
+            if (smart.vendor) next.vendor = smart.vendor
           }
           setDetected(next)
           const merged = Object.assign({}, advanced)
-          if (!touched.aspect && next.aspect) merged.aspect = next.aspect
-          if (!touched.duration && next.duration) merged.duration = next.duration
-          if (!touched.resolution && next.resolution) merged.resolution = next.resolution
-          if (!touched.generation_mode && next.mode) merged.generation_mode = next.mode
+          if (next.aspect) merged.aspect = next.aspect
+          if (next.duration) merged.duration = next.duration
+          if (next.resolution) merged.resolution = next.resolution
+          if (next.mode) merged.generation_mode = next.mode
+          if (next.subtitle) merged.subtitle = next.subtitle
+          const vendorModel = modelForVendor(next.vendor, models)
+          if (vendorModel) merged.model = vendorModel
           if (selectedTextModel) merged.text_model = selectedTextModel
           const personaPayload = personaEnabled ? { persona, persona_map: personaId ? { A: personaId, B: personaId } : {} } : {}
           const data = await api('/runs', { method: 'POST', body: {
@@ -1216,7 +1289,7 @@ window.__ModuleLoader__.load({
             h('p', { className: 'adp-lede' }, '把一条已验证的片子拆成结构和梗，换成你的商品、人物和台词。先给素材，再写要求，剩下的交给后台。')
           ),
           h('div', { className: 'adp-page-meta' },
-            h(Badge, { status: hasRealModel ? 'ok' : 'warn' }, hasRealModel ? '原生对白' : 'Demo 模式'),
+            h(Badge, { status: hasRealModel ? 'ok' : 'bad' }, hasRealModel ? '模型已就绪' : '未配置模型'),
             h('span', null, '≤30s 参考片')
           )
         ),
@@ -1268,18 +1341,13 @@ window.__ModuleLoader__.load({
                   )
                 )
               ),
-              h('label', { className: 'adp-check' },
-                h('input', { type: 'checkbox', checked: rights, onChange: (e) => setRights(e.currentTarget.checked) }),
-                '我确认有权使用这条参考视频做二次创作'
-              ),
               h('div', { className: 'adp-section-head' },
                 h('span', { className: 'adp-step' }, '03'),
-                h('span', { className: 'adp-section-title' }, '生成设置'),
-                h('span', { className: 'adp-section-note' }, '默认值可直接开')
+                h('span', { className: 'adp-section-title' }, '生成设置')
               ),
-              h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models }),
+              h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models, needsDialogue: true }),
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
-              conflicts.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '手动参数优先'), conflicts.join('；')) : (manualFields.length ? h('div', { className: 'adp-hint' }, '已手动设置 ' + manualFields.join(' / ') + '，描述识别不会覆盖这些字段。') : null),
+              overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
               h('div', { className: 'adp-section-head' },
                 h('span', { className: 'adp-step' }, '04'),
                 h('span', { className: 'adp-section-title' }, '模特'),
@@ -1316,12 +1384,12 @@ window.__ModuleLoader__.load({
               ),
               h('div', { className: 'adp-actionbar' },
                 h('div', { className: 'adp-action-note' },
-                  !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : !rights ? h('span', { style: { color: '#C99B54' } }, '勾选授权后开始。') : (hasRealModel ? '将使用已配置的原生对白模型；生成通常需要几分钟。' : 'Demo 模式：本地占位，不调用付费模型。'),
+                  !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
                   h('br'),
                   '开始后可在结果页看分镜、派生新版本或拼接。'
                 ),
                 h('div', { className: 'adp-grow' }),
-                h('button', { className: 'adp-primary', onClick: start, disabled: busy || !refAsset || !rights },
+                h('button', { className: 'adp-primary', onClick: start, disabled: busy || !refAsset },
                   busy ? '正在启动…' : '开始复刻',
                   h('span', { className: 'arrow' }, '→')
                 )
@@ -1356,7 +1424,7 @@ window.__ModuleLoader__.load({
       const [mode, setMode] = useState('video')
       const [textModel, setTextModel] = useState(null)
       const [files, setFiles] = useState([])
-      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 8, aspect: '9:16', resolution: '720p', model: 'auto' })
+      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 8, aspect: '9:16', resolution: '720p', model: '' })
       const [showAdvanced, setShowAdvanced] = useState(false)
       const [touched, setTouched] = useState({})
       const [busy, setBusy] = useState(false)
@@ -1369,27 +1437,34 @@ window.__ModuleLoader__.load({
       const selectedTextModel = textModel || defaultDshTextModel(dsh)
       const stitchIntent = Boolean(detected.stitch)
       const selectedModel = (models || []).find((m) => m.id === advanced.model)
-      const imageOnly = Boolean(selectedModel && !(selectedModel.modes || []).includes('text_to_video'))
-      const modelOptions = [{ value: 'auto', label: 'Auto · 自动选择' }].concat((models || []).filter((m) => m.available && m.enabled !== false).map((m) => ({ value: m.id, label: m.label })))
+      const imageOnly = Boolean(selectedModel && !(selectedModel.capabilities || []).includes('text_to_video'))
+      useEffect(() => {
+        setAdvanced((prev) => {
+          const usable = (models || []).filter((m) => m.available && m.enabled !== false)
+          if (prev.model && usable.some((m) => m.id === prev.model)) return prev
+          const pick = defaultModelId(models, false)
+          return pick ? Object.assign({}, prev, { model: pick }) : prev
+        })
+      }, [models])
+      const modelOptions = (models || []).filter((m) => m.available && m.enabled !== false).map((m) => ({ value: m.id, label: m.label }))
+      const currentModel = modelOptions.some((o) => o.value === advanced.model) ? advanced.model : (modelOptions[0] ? modelOptions[0].value : '')
       const detectedLabels = []
       if (detected.aspect) detectedLabels.push(detected.aspect)
       if (detected.duration) detectedLabels.push(detected.duration + 's')
       if (detected.resolution) detectedLabels.push(detected.resolution)
       if (detected.mode === 'fine') detectedLabels.push('精细')
-      const manualFields = []
-      if (touched.aspect) manualFields.push('比例')
-      if (touched.duration) manualFields.push('时长')
-      if (touched.resolution) manualFields.push('清晰度')
-      if (touched.generation_mode) manualFields.push('模式')
-      const conflicts = []
-      if (touched.aspect && detected.aspect && detected.aspect !== advanced.aspect) conflicts.push('比例手动 ' + advanced.aspect + ' 覆盖描述 ' + detected.aspect)
-      if (touched.duration && detected.duration && Number(detected.duration) !== Number(advanced.duration)) conflicts.push('时长手动 ' + advanced.duration + 's 覆盖描述 ' + detected.duration + 's')
-      if (touched.resolution && detected.resolution && detected.resolution !== advanced.resolution) conflicts.push('清晰度手动 ' + advanced.resolution + ' 覆盖描述 ' + detected.resolution)
-      if (touched.generation_mode && detected.mode && detected.mode !== advanced.generation_mode) conflicts.push('模式手动覆盖描述识别')
+      // The brief wins: every parameter it names replaces the control value, and
+      // the list below says exactly what will change before the run starts.
+      const overrides = []
+      if (detected.aspect && detected.aspect !== advanced.aspect) overrides.push('比例 ' + detected.aspect + '（控件 ' + advanced.aspect + '）')
+      if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
+      if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
+      if (detected.mode && detected.mode !== advanced.generation_mode) overrides.push('模式 精细（控件 快速）')
+      if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
       const changeAdvanced = (patch) => {
         const next = Object.assign({}, advanced, patch)
         const changed = {}
-        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode']) {
+        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode', 'subtitle']) {
           if (next[key] !== advanced[key]) changed[key] = true
         }
         if (Object.keys(changed).length) setTouched((prev) => Object.assign({}, prev, changed))
@@ -1425,14 +1500,19 @@ window.__ModuleLoader__.load({
             if (smart.duration) next.duration = smart.duration
             if (smart.resolution) next.resolution = smart.resolution
             if (smart.mode) next.mode = smart.mode
+            if (smart.subtitle) next.subtitle = smart.subtitle
+            if (smart.vendor) next.vendor = smart.vendor
           }
           next.stitch = Boolean((smart && smart.stitch) || detected.stitch || /(拼接|拼起来|拼成|接起来|接到一起|合并|组合|连起来|插入|顺序拼|前后拼)/.test(brief))
           setDetected(next)
           const merged = Object.assign({}, advanced)
-          if (!touched.aspect && next.aspect) merged.aspect = next.aspect
-          if (!touched.duration && next.duration) merged.duration = next.duration
-          if (!touched.resolution && next.resolution) merged.resolution = next.resolution
-          if (!touched.generation_mode && next.mode) merged.generation_mode = next.mode
+          if (next.aspect) merged.aspect = next.aspect
+          if (next.duration) merged.duration = next.duration
+          if (next.resolution) merged.resolution = next.resolution
+          if (next.mode) merged.generation_mode = next.mode
+          if (next.subtitle) merged.subtitle = next.subtitle
+          const vendorModel = modelForVendor(next.vendor, models)
+          if (vendorModel) merged.model = vendorModel
           if (next.stitch) {
             if (videos.length < 2) { setErr('要拼接请至少上传两段视频'); return }
             const data = await api('/stitch', { method: 'POST', body: {
@@ -1457,17 +1537,17 @@ window.__ModuleLoader__.load({
       const imageAvailable = (imageModels || []).some((m) => m.available)
       const modeTabs = h('div', { className: 'adp-create-tabs' },
         h('button', { className: 'adp-create-tab' + (mode === 'video' ? ' on' : ''), onClick: () => setMode('video') }, '文生视频'),
-        h('button', { className: 'adp-create-tab' + (mode === 'image' ? ' on' : ''), disabled: !imageAvailable, title: imageAvailable ? '用文字生成图片' : '配置 MINIMAX_API_KEY 后可用', onClick: () => imageAvailable && setMode('image') }, '文生图片', !imageAvailable ? h('span', { className: 'adp-create-tab-note' }, '未配置图片模型') : null)
+        h('button', { className: 'adp-create-tab' + (mode === 'image' ? ' on' : ''), disabled: !imageAvailable, title: imageAvailable ? '用文字生成图片' : '先在设置里配置图片模型厂商 key', onClick: () => imageAvailable && setMode('image') }, '文生图片', !imageAvailable ? h('span', { className: 'adp-create-tab-note' }, '未配置图片模型') : null)
       )
       const pageHead = h('div', { className: 'adp-page-head' },
         h('div', null,
           h('div', { className: 'adp-eyebrow' }, 'FREE CREATE'),
           h('h1', { className: 'adp-title' }, '自由创作'),
-          h('p', { className: 'adp-lede' }, '文生视频用于成片；文生图片用于生成商品图、场景图、参考图。参数可以直接写在描述里，也可以打开参数调整。')
+          h('p', { className: 'adp-lede adp-nowrap', title: '文生视频出成片；文生图片出商品图。参数可直接写在描述里。' }, '文生视频出成片；文生图片出商品图。参数可直接写在描述里。')
         )
       )
       if (mode === 'image') {
-        return h('div', { className: 'adp-page' }, pageHead, modeTabs, h(ImagePanel, { imageModels, onStarted }))
+        return h('div', { className: 'adp-page' }, pageHead, modeTabs, h(ImagePanel, { imageModels, onStarted, onRefreshAssets }))
       }
       return h('div', { className: 'adp-page' },
         pageHead,
@@ -1498,11 +1578,11 @@ window.__ModuleLoader__.load({
             h('input', { ref: input, type: 'file', accept: 'image/*,video/*', multiple: true, onChange: upload, style: { display: 'none' } })
           ),
           detectedLabels.length ? h('div', { className: 'adp-detected' }, h('span', null, '从描述识别'), detectedLabels.map((label) => h('span', { key: label, className: 'adp-detected-chip' }, label))) : null,
-          conflicts.length ? h('div', { className: 'adp-conflict' }, h('b', null, '手动参数优先'), conflicts.join('；')) : (manualFields.length ? h('div', { className: 'adp-hint' }, '已手动设置 ' + manualFields.join(' / ') + '，描述识别不会覆盖这些字段。') : null),
+          overrides.length ? h('div', { className: 'adp-conflict' }, h('b', null, '描述优先'), overrides.join('；')) : null,
           h('div', { className: 'adp-composer-foot' },
             h('div', { className: 'adp-row' },
               h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
-              h('select', { className: 'adp-select adp-model-select', value: advanced.model, onChange: (e) => setAdvanced(Object.assign({}, advanced, { model: e.currentTarget.value })) },
+              h('select', { className: 'adp-select adp-model-select', value: currentModel, onChange: (e) => setAdvanced(Object.assign({}, advanced, { model: e.currentTarget.value })) },
                 modelOptions.map((o) => h('option', { key: o.value, value: o.value }, o.label))
               ),
               h('button', { className: 'adp-btn ghost', onClick: () => setShowAdvanced((v) => !v) }, showAdvanced ? '收起参数' : '参数'),
@@ -1515,30 +1595,38 @@ window.__ModuleLoader__.load({
           )
         ),
         showAdvanced ? h('div', { className: 'adp-advanced-panel' },
-          h('div', { className: 'adp-section-head' }, h('span', { className: 'adp-section-title' }, '生成参数'), h('span', { className: 'adp-section-note' }, '手动改过的字段优先于描述识别')),
-          h('div', { className: 'adp-field-grid g3' },
-            h(FormSelect, { label: '模式', value: advanced.generation_mode, onChange: (x) => changeAdvanced({ generation_mode: x }), options: [{ value: 'fast', label: '快速 · 整条' }, { value: 'fine', label: '精细 · 分段' }] }),
-            h(FormSelect, { label: '时长（秒）', value: advanced.duration, onChange: (x) => changeAdvanced({ duration: Number(x) }), options: [5, 8, 10, 12, 15, 30] }),
-            h(FormSelect, { label: '比例', value: advanced.aspect, onChange: (x) => changeAdvanced({ aspect: x }), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] })
-          ),
-          h('div', { className: 'adp-field-grid g2' },
-            h(FormSelect, { label: '清晰度', value: advanced.resolution, onChange: (x) => changeAdvanced({ resolution: x }), options: ['480p', '720p', '1080p'] })
-          ),
+          h('div', { className: 'adp-section-head' }, h('span', { className: 'adp-section-title' }, '生成参数')),
+          h(AdvancedRow, { value: advanced, onChange: (next) => changeAdvanced(next), models, needsDialogue: false }),
           imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要图片附件；它不生成原生音频。') : null
         ) : null,
         err ? h('div', { className: 'adp-error' }, err) : null
       )
     }
 
-    function ImagePanel({ imageModels, onStarted }) {
-      const available = (imageModels || []).filter((m) => m.available)
+    function ImagePanel({ imageModels, onStarted, onRefreshAssets }) {
+      const available = (imageModels || []).filter((m) => m.available && (m.capabilities || []).includes('text_to_image'))
       const [prompt, setPrompt] = useState('')
       const [model, setModel] = useState(available[0] ? available[0].id : '')
       const [aspect, setAspect] = useState('1:1')
       const [area, setArea] = useState('2K')
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
+      const [refAsset, setRefAsset] = useState(null)
+      const [refBusy, setRefBusy] = useState(false)
       const selected = available.find((m) => m.id === model) || available[0]
+      const takesReference = Boolean(selected && (selected.capabilities || []).includes('image_to_image'))
+      const uploadReference = async (event) => {
+        const file = (event.currentTarget.files || [])[0]
+        event.currentTarget.value = ''
+        if (!file) return
+        if (!file.type.startsWith('image/')) { setErr('参考图只支持图片文件'); return }
+        setRefBusy(true); setErr('')
+        try {
+          const asset = await uploadFile(file, 'image')
+          setRefAsset(asset)
+          onRefreshAssets && await onRefreshAssets()
+        } catch (e) { setErr(String(e.message || e)) } finally { setRefBusy(false) }
+      }
       useEffect(() => {
         if (!selected && available.length) { setModel(available[0].id); setArea(available[0].default_area || '2K') }
         if (selected && selected.default_area && !(selected.areas || []).includes(area)) setArea(selected.default_area)
@@ -1547,12 +1635,12 @@ window.__ModuleLoader__.load({
         if (!prompt.trim()) { setErr('先描述你想生成的图片'); return }
         setBusy(true); setErr('')
         try {
-          const data = await api('/images', { method: 'POST', body: { prompt: prompt.trim(), model: selected ? selected.id : '', aspect, area } })
+          const data = await api('/images', { method: 'POST', body: { prompt: prompt.trim(), model: selected ? selected.id : '', aspect, area, reference_asset_id: takesReference && refAsset ? refAsset.id : '' } })
           onStarted(data.run)
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
       if (!available.length) {
-        return h('div', { className: 'adp-card adp-col' }, h('div', { className: 'adp-h2' }, '暂无可用图片模型'), h('div', { className: 'adp-small adp-muted' }, '配置 MINIMAX_API_KEY 后，MiniMax H3 Image 会出现在这里。'))
+        return h('div', { className: 'adp-card adp-col' }, h('div', { className: 'adp-h2' }, '暂无可用图片模型'), h('div', { className: 'adp-small adp-muted' }, '到「设置」里配置 MiniMax 或火山方舟的 key 后，图片模型会出现在这里。'))
       }
       return h('div', { className: 'adp-composer' },
         h('div', { className: 'adp-composer-head' }, h('span', { className: 'adp-composer-label' }, '描述图片'), h('span', { className: 'adp-composer-count' }, prompt.length + ' / 1000')),
@@ -1563,7 +1651,15 @@ window.__ModuleLoader__.load({
               available.map((m) => h('option', { key: m.id, value: m.id }, m.label))
             ),
             h('select', { className: 'adp-select', value: aspect, onChange: (e) => setAspect(e.currentTarget.value) }, (selected ? selected.aspects : ['1:1']).map((x) => h('option', { key: x, value: x }, x))),
-            h('select', { className: 'adp-select', value: area, onChange: (e) => setArea(e.currentTarget.value) }, (selected ? selected.areas : ['2K']).map((x) => h('option', { key: x, value: x }, x)))
+            h('select', { className: 'adp-select', value: area, onChange: (e) => setArea(e.currentTarget.value) }, (selected ? selected.areas : ['2K']).map((x) => h('option', { key: x, value: x }, x))),
+            takesReference ? h('label', { className: 'adp-ref-upload' + (refAsset ? ' has' : ''), title: '可选：上传一张参考图，按图生图生成' },
+              refBusy ? h('span', null, '上传中…')
+                : refAsset
+                  ? h('span', { className: 'adp-ref-chip' }, h('img', { src: mediaUrl(refAsset.path), alt: refAsset.name }), h('span', { className: 'adp-ref-name' }, refAsset.name))
+                  : h('span', null, '＋ 参考图（可选）'),
+              h('input', { type: 'file', accept: 'image/*', onChange: uploadReference, disabled: refBusy, style: { position: 'absolute', width: 1, height: 1, opacity: 0, clip: 'rect(0 0 0 0)', overflow: 'hidden' } })
+            ) : null,
+            refAsset && takesReference ? h('button', { className: 'adp-btn ghost', onClick: () => setRefAsset(null), title: '移除参考图' }, '移除') : null
           ),
           h('button', { className: 'adp-primary', onClick: start, disabled: busy }, busy ? '生成中…' : '生成图片', h('span', { className: 'arrow' }, '→'))
         ),
@@ -1928,8 +2024,8 @@ window.__ModuleLoader__.load({
         api('/settings/keys').then((d) => setKeys(d.keys || [])).catch((e) => setErr(String(e.message || e)))
       }, [])
       const providers = [
-        { id: 'minimax', name: 'MiniMax', key: 'MINIMAX_API_KEY', desc: 'H3 原生对白 / Hailuo 图生视频' },
-        { id: 'ark', name: '火山方舟', key: 'ARK_API_KEY', desc: 'Seedance 2.5 / 2.0' },
+        { id: 'minimax', name: 'MiniMax', key: 'MINIMAX_API_KEY', desc: 'H3 原生对白 / Hailuo 图生视频 / H3 Image' },
+        { id: 'ark', name: '火山方舟', key: 'ARK_API_KEY', desc: 'Seedance 2.5 / 2.0 · Seedream 4.0' },
         { id: 'kling', name: 'Kling 可灵', key: 'KLING_API_KEY', desc: 'Kling v3 原生音频' },
       ]
       const statusFor = (name) => (keys || []).find((k) => k.name === name) || { present: false, masked: '' }
@@ -1976,7 +2072,7 @@ window.__ModuleLoader__.load({
           h('div', null,
             h('div', { className: 'adp-eyebrow' }, 'SETTINGS / MODELS'),
             h('h1', { className: 'adp-title' }, '设置与模型'),
-            h('p', { className: 'adp-lede' }, '这里只管理视频服务商和视频模型。文本模型在创作页输入框下方选择，由 DSH 提供；不在这里配置。')
+            h('p', { className: 'adp-lede' }, '视频与图片模型；勾选后才会出现在生成页。文本模型由 DSH 提供，在创作页选择。')
           ),
           h('div', { className: 'adp-row' }, health ? h(Badge, { status: health.ok ? 'ok' : 'bad' }, health.ok ? '引擎在线' : '引擎离线') : null, h('button', { className: 'adp-btn', onClick: refresh, disabled: refreshing }, refreshing ? '刷新中…' : '刷新模型'), h('button', { className: 'adp-btn ghost', onClick: async () => { try { await api('/reveal', { method: 'POST', body: { path: '' } }) } catch (e) { setErr(String(e.message || e)) } } }, '打开数据文件夹'))
         ),
@@ -2024,8 +2120,8 @@ window.__ModuleLoader__.load({
             !openModelsForProvider && enabledProviderModels.length ? h('div', { className: 'adp-model-summary' }, enabledProviderModels.map((m) => h('span', { key: m.id, className: 'adp-model-summary-chip' }, m.label))) : null,
             openModelsForProvider ? h('div', { className: 'adp-provider-models' },
               providerModels.length ? providerModels.map((m) => h('div', { key: m.id, className: 'adp-provider-model' + (m.available ? ' on' : '') + (m.enabled === false ? ' off' : '') },
-                h('div', null, h('div', { className: 'adp-provider-model-name' }, m.label), h('div', { className: 'adp-small adp-muted' }, m.reason || '')),
-                h('div', { className: 'adp-row', style: { gap: 5 } }, m.available ? h(Badge, { status: 'ok' }, '可用') : h(Badge, null, '待 key'), h('span', { className: 'adp-small adp-muted' }, m.native_audio ? '原生对白' : '无原生音频'), h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m), title: '是否出现在生成页' }), '启用'))
+                h('div', null, h('div', { className: 'adp-provider-model-name' }, m.label), h(CapabilityChips, { row: m })),
+                h('div', { className: 'adp-row', style: { gap: 5 } }, m.available ? h(Badge, { status: 'ok' }, '可用') : h(Badge, { title: m.reason || '' }, '待 key'), m.native_audio ? h('span', { className: 'adp-small adp-muted' }, '原生对白') : null, h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m), title: '是否出现在生成页' }), '启用'))
               )) : h('div', { className: 'adp-small adp-muted' }, '该厂商暂无可展示模型；保存 key 后刷新。')
             ) : null
           )
@@ -2033,12 +2129,12 @@ window.__ModuleLoader__.load({
         notice ? h('div', { className: 'adp-notice' }, notice) : null,
         err ? h('div', { className: 'adp-error', style: { marginTop: 10 } }, err) : null,
         h('div', { className: 'adp-section-head', style: { marginTop: 20 } }, h('span', { className: 'adp-step' }, '02'), h('span', { className: 'adp-section-title' }, '其他模型'), h('span', { className: 'adp-section-note' }, '未接入或可选通道')),
-        h('table', { className: 'adp-table' }, h('thead', null, h('tr', null, h('th', null, '模型'), h('th', null, '状态'), h('th', null, '原生对白'), h('th', null, '启用'), h('th', null, '说明'))), h('tbody', null, otherModels.map((m) => h('tr', { key: m.id }, h('td', null, m.label), h('td', null, m.available ? h(Badge, { status: 'ok' }, '可用') : h(Badge, null, '未接入')), h('td', null, m.native_audio ? '是' : '否'), h('td', null, h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m) }), '启用')), h('td', null, m.reason || ''))))),
-        h('div', { className: 'adp-hint', style: { marginTop: 12 } }, '密钥只保存在本机 Ad+ 数据目录的 settings.json（权限 0600）；不会回显完整值。生产版应迁移到系统 Keychain。')
+        h('table', { className: 'adp-table' }, h('thead', null, h('tr', null, h('th', null, '模型'), h('th', null, '能力'), h('th', null, '状态'), h('th', null, '启用'))), h('tbody', null, otherModels.map((m) => h('tr', { key: m.id }, h('td', null, m.label), h('td', null, h(CapabilityChips, { row: m })), h('td', null, h(Badge, { title: m.reason || '' }, '未接入')), h('td', null, h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: m.enabled !== false, disabled: busy === 'models', onChange: () => toggleModel(m) }), '启用')))))),
+        h('div', { className: 'adp-hint', style: { marginTop: 12 } }, '密钥只保存在本机数据目录的 settings.json（权限 0600）；不会回显完整值。生产版应迁移到系统 Keychain。')
       )
     }
 
-    class AdPlusBoundary extends React.Component {
+    class AdClipBoundary extends React.Component {
       constructor(props) {
         super(props)
         this.state = { error: null }
@@ -2055,7 +2151,7 @@ window.__ModuleLoader__.load({
             h('style', null, CSS),
             h('div', { className: 'adp-crash' },
               h('div', { className: 'box' },
-                h('h3', null, 'Ad+ UI 加载失败'),
+                h('h3', null, 'AdClip UI 加载失败'),
                 h('div', null, String(this.state.error && (this.state.error.stack || this.state.error.message || this.state.error))),
                 h('div', { style: { marginTop: 12 } }, h('button', { className: 'adp-btn', onClick: () => location.reload() }, '重新加载'))
               )
@@ -2071,7 +2167,6 @@ window.__ModuleLoader__.load({
       const [health, setHealth] = useState(null)
       const [models, setModels] = useState([])
       const [dsh, setDsh] = useState(null)
-      const [imageModels, setImageModels] = useState([])
       const [runs, setRuns] = useState([])
       const [assets, setAssets] = useState([])
       const [personas, setPersonas] = useState([])
@@ -2084,8 +2179,8 @@ window.__ModuleLoader__.load({
         if (state) setEngine(state)
         if (state && !state.ok) return
         try {
-          const [h, m, r, a, p, d, im] = await Promise.all([api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'), api('/dsh/models').catch(() => ({ dsh: null })), api('/image/models').catch(() => ({ models: [] }))])
-          setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setPersonas(p.personas || []); setDsh(d.dsh || null); setImageModels(im.models || [])
+          const [h, m, r, a, p, d] = await Promise.all([api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'), api('/dsh/models').catch(() => ({ dsh: null }))])
+          setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setPersonas(p.personas || []); setDsh(d.dsh || null)
           setSelected(prev => prev ? (r.runs || []).find(x => x.id === prev.id) || prev : null)
         } catch (e) { setErr(String(e.message || e)) }
       }, [])
@@ -2107,6 +2202,10 @@ window.__ModuleLoader__.load({
         }, 2000)
         return () => clearInterval(timer)
       }, [selected && selected.id, selected && selected.status])
+
+      // One catalogue, two views: generation pages filter on kind + capability.
+      const videoModels = (models || []).filter((m) => m.kind === 'video')
+      const imageModels = (models || []).filter((m) => m.kind === 'image')
 
       const openRun = (run) => { setSelected(run) }
       const started = (run) => { setSelected(run); void refresh() }
@@ -2135,8 +2234,8 @@ window.__ModuleLoader__.load({
               : null,
             err ? h('div', { className: 'adp-error' }, err) : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
-            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models, dsh, onStarted: started, personas, onRefreshPersonas: refresh })),
-            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { models, dsh, imageModels, onStarted: started, assets, onRefreshAssets: refresh })),
+            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, dsh, onStarted: started, personas, onRefreshPersonas: refresh })),
+            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { models: videoModels, dsh, imageModels, onStarted: started, assets, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,
@@ -2149,8 +2248,8 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'adplus' }, () => h(AdPlusBoundary, null, h(App))))
-        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'adplus', order: 30, label: () => '广告短片' }, Icon))
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'adplus' }, () => h(AdClipBoundary, null, h(App))))
+        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'adplus', order: 30, label: () => 'AdClip' }, Icon))
       },
     }
   },

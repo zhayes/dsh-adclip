@@ -22,11 +22,18 @@ def post(run_id: str) -> dict[str, Any]:
     width, height = params.size_for(str(advanced.get("aspect") or "9:16"), str(advanced.get("resolution") or "720p"))
     final = store.run_artifact(run_id, "final.mp4")
     ffmpeg.normalize(raw, final, width=width, height=height, fps=int(advanced.get("fps") or 30))
-    srt = store.run_artifact(run_id, "subtitles.srt")
-    subtitles.write_srt(script, srt)
+    # Subtitles are a sidecar SRT, never burned in (the ffmpeg build has no
+    # libass/drawtext). The run's own setting decides whether we deliver one.
+    srt_path = store.run_artifact(run_id, "subtitles.srt")
+    if str(advanced.get("subtitle") or "off") == "sidecar":
+        subtitles.write_srt(script, srt_path)
+        srt_value = store.rel_to_data(srt_path)
+    else:
+        srt_path.unlink(missing_ok=True)
+        srt_value = None
     return {
         "video": store.rel_to_data(final),
-        "srt": store.rel_to_data(srt),
+        "srt": srt_value,
         "width": width,
         "height": height,
         "duration_s": ffmpeg.probe(final)["duration_s"],

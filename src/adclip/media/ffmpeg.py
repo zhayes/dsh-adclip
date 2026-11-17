@@ -122,7 +122,7 @@ def extract_frame(source: str | Path, at_s: float, target: str | Path, width: in
     return out
 
 
-def make_demo_clip(
+def make_synthetic_clip(
     source: str | Path | None,
     target: str | Path,
     *,
@@ -131,11 +131,11 @@ def make_demo_clip(
     height: int,
     fps: int = 30,
 ) -> Path:
-    """Create a deterministic demo clip.
+    """Create a deterministic synthetic clip for tests.
 
     With a reference source, trim/loop it to the requested duration and frame.
     Without a source, render a test pattern so text-to-video can be exercised.
-    The clip is explicitly a demo; it is not a paid provider result.
+    The clip is synthetic: only the test mode uses it, never a paid provider result.
     """
     out = Path(target)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ def make_demo_clip(
         ]
     proc = run(cmd, timeout=300)
     if proc.returncode != 0 or not out.is_file():
-        raise RuntimeError(f"demo clip failed: {proc.stderr[-500:]}")
+        raise RuntimeError(f"synthetic clip failed: {proc.stderr[-500:]}")
     return out
 
 

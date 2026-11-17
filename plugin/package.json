@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-adclip",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "AdClip: AI ad clips up to 30 seconds — viral remakes, text to video, storyboard edits, personas and stitching inside DSH.",
+  "description": "AdClip: AI ad clips up to 30 seconds — viral remakes, text to video, text to image, storyboard edits, personas and stitching inside DSH.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

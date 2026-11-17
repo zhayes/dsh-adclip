@@ -77,7 +77,7 @@ SCENE 01 / VIRAL REMAKE
 Commercial references: Kling's current guide puts prompt and reference assets first
 (up to 15 references, prompt expansion, 3-30s, Auto aspect), with duration/resolution
 as secondary controls; Pika/Runway follow the same prompt-plus-reference model.
-Ad+ therefore replaces the field-heavy form with one composer:
+AdClip therefore replaces the field-heavy form with one composer:
 
 - one large prompt;
 - one attachment strip for images/videos;
@@ -126,7 +126,7 @@ Preview: [text-composer.png](images/text-composer.png).
 ## Model enablement
 
 - Every model row in Settings has an 启用 checkbox; provider cards have 全选/全不选.
-- Preferences persist in the Ad+ data directory’s `model_prefs.json`.
+- Preferences persist in the plugin's data directory’s `model_prefs.json`.
 - Generation dropdowns and Auto selection only consider models that are both
   enabled and available. Disabling a model removes it from future generation,
   but not from Settings or historical runs.

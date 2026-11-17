@@ -1,4 +1,4 @@
-"""Filesystem store for Ad+ Studio.
+"""Filesystem store for AdClip.
 
 `data/runs/<id>/run.json` is the single source of truth. Assets and personas
 have sidecar JSON records. No database is used in the first slice.

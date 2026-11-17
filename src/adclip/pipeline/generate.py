@@ -1,22 +1,36 @@
-"""Generation: demo fallback plus the real Ark Seedance adapter."""
+"""Generation: capability-driven model choice plus the real provider adapters."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from .. import params, store
+from .. import catalog, params, store
 from ..media import ffmpeg
-from ..media import stitch as stitch_mod
 from ..providers.ark import ArkProvider
 from ..providers.kling import KlingProvider
 from ..providers.minimax import MiniMaxProvider
 from . import persona as persona_mod
 
+PROVIDERS = {"ark": ArkProvider, "kling": KlingProvider, "minimax": MiniMaxProvider}
+
+
+def _adapter(model_id: str) -> Any | None:
+    """Adapter instance for a catalogue row, or None for the test-only model."""
+    row = catalog.get(model_id) or {}
+    provider = str(row.get("provider") or "")
+    if provider == "synthetic":
+        return None
+    factory = PROVIDERS.get(provider)
+    if factory is None:
+        raise RuntimeError(f"模型 {model_id} 没有可用的适配器（provider={provider or 'unknown'}）")
+    return factory()
+
 
 def resolve_model(run: Any) -> str:
+    """The model id this run should use: explicit when valid, else capability-first."""
     requested = str((run.advanced or {}).get("model") or "auto")
     if requested not in {"", "auto"}:
-        model = params.get_model(requested)
+        model = catalog.get(requested)
         if model is None:
             raise RuntimeError(f"unknown model: {requested}")
         if model.get("enabled") is False:
@@ -25,16 +39,21 @@ def resolve_model(run: Any) -> str:
             raise RuntimeError(f"模型 {requested} 不可用：{model.get('reason')}")
         return requested
     needs_dialogue = run.scenario == "viral-remake"
-    for candidate in ("ark.seedance-2.5", "ark.seedance-2.0", "ark.seedance-2.0-fast", "ark.seedance-2.0-mini", "kling.v3", "minimax.h3", "minimax.hailuo-2.3-fast"):
-        model = params.get_model(candidate)
-        if not model or not model.get("available") or model.get("enabled") is False:
-            continue
-        if "text_to_video" not in (model.get("modes") or []):
-            continue
-        if needs_dialogue and not model.get("native_audio"):
-            continue
-        return candidate
-    return "demo"
+    rows = catalog.with_capability("text_to_video", kind="video", usable=True)
+    if not rows:
+        raise RuntimeError("没有可用的视频模型：请在设置里配置对应厂商的 key")
+    order = {row["id"]: index for index, row in enumerate(catalog.rows())}
+
+    def rank(row: dict[str, Any]) -> tuple[int, int, int]:
+        # Real providers first, dialogue-capable models first when the scenario
+        # speaks, then catalogue order so the choice is deterministic.
+        return (
+            1 if row.get("provider") == "synthetic" else 0,
+            0 if (not needs_dialogue or row.get("native_audio")) else 1,
+            order.get(row["id"], 999),
+        )
+
+    return sorted(rows, key=rank)[0]["id"]
 
 
 def _cast_text(advanced: dict[str, Any]) -> str:
@@ -126,16 +145,11 @@ def generate_segment(run: Any, seg: dict[str, Any], output: Path) -> dict[str, A
     script = store.read_json(store.run_dir(run.id) / "artifacts" / "script.json", {}) or {}
     ref_id = (run.inputs or {}).get("reference_asset_id")
     source = store.asset_media_path(ref_id) if ref_id else None
-    if model == "demo":
-        ffmpeg.make_demo_clip(source, output, duration=seg_len, width=width, height=height, fps=int(advanced.get("fps") or 30))
-        return {"model": "demo", "path": str(output), "demo": True, "duration_s": seg_len}
     prompt = _segment_prompt(run, script, seg)
-    if model.startswith("kling."):
-        provider = KlingProvider()
-    elif model.startswith("minimax."):
-        provider = MiniMaxProvider()
-    else:
-        provider = ArkProvider()
+    provider = _adapter(model)
+    if provider is None:
+        ffmpeg.make_synthetic_clip(source, output, duration=seg_len, width=width, height=height, fps=int(advanced.get("fps") or 30))
+        return {"model": model, "path": str(output), "demo": True, "duration_s": seg_len}
     allowed = list((params.get_model(model) or {}).get("durations") or [4, 5, 6, 10])
     target = int(seg_len + 0.999)
     gen_duration = next((d for d in sorted(allowed) if d >= target), max(allowed))
@@ -161,41 +175,22 @@ def generate(run_id: str) -> dict[str, Any]:
     width, height = params.size_for(str(advanced.get("aspect") or "9:16"), str(advanced.get("resolution") or "720p"))
     ref_id = (run.inputs or {}).get("reference_asset_id")
     source = store.asset_media_path(ref_id) if ref_id else None
-    out = store.run_artifact(run_id, "demo_raw.mp4")
-
-    if model != "demo":
-        script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
-        prompt = _script_prompt(run, script)
-        if model.startswith("kling."):
-            provider = KlingProvider()
-        elif model.startswith("minimax."):
-            provider = MiniMaxProvider()
-        else:
-            provider = ArkProvider()
-        result_path = store.run_artifact(run_id, "provider_raw.mp4")
-        provider.generate(
-            prompt,
-            images=_reference_images(run),
-            duration=int(duration),
-            resolution=str(advanced.get("resolution") or "720p"),
-            aspect=str(advanced.get("aspect") or "9:16"),
-            model=model,
-            output=result_path,
-        )
-        return {"model": model, "path": str(result_path), "demo": False, "duration_s": duration}
-
-    mode = str(advanced.get("generation_mode") or "fast")
-    if mode == "fine" and duration > 8:
-        half = duration / 2
-        a = store.run_artifact(run_id, "demo_part0.mp4")
-        b = store.run_artifact(run_id, "demo_part1.mp4")
-        ffmpeg.make_demo_clip(source, a, duration=half, width=width, height=height, fps=int(advanced.get("fps") or 30))
-        ffmpeg.make_demo_clip(source, b, duration=half, width=width, height=height, fps=int(advanced.get("fps") or 30))
-        plan_data = stitch_mod.plan(
-            [{"path": str(a), "in_s": 0, "out_s": half}, {"path": str(b), "in_s": 0, "out_s": half}],
-            width=width, height=height, fit="black_pad", transition="cut", audio="keep",
-        )
-        stitch_mod.execute(plan_data, out)
-    else:
-        ffmpeg.make_demo_clip(source, out, duration=duration, width=width, height=height, fps=int(advanced.get("fps") or 30))
-    return {"model": "demo", "path": str(out), "demo": True, "duration_s": duration}
+    result_path = store.run_artifact(run_id, "provider_raw.mp4")
+    provider = _adapter(model)
+    if provider is None:
+        # Test-only synthetic model: a local clip so the pipeline stays runnable
+        # without any provider key.
+        ffmpeg.make_synthetic_clip(source, result_path, duration=duration, width=width, height=height, fps=int(advanced.get("fps") or 30))
+        return {"model": model, "path": str(result_path), "demo": True, "duration_s": duration}
+    script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
+    prompt = _script_prompt(run, script)
+    provider.generate(
+        prompt,
+        images=_reference_images(run),
+        duration=int(duration),
+        resolution=str(advanced.get("resolution") or "720p"),
+        aspect=str(advanced.get("aspect") or "9:16"),
+        model=model,
+        output=result_path,
+    )
+    return {"model": model, "path": str(result_path), "demo": False, "duration_s": duration}

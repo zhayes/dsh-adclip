@@ -7,7 +7,9 @@ from typing import Any
 
 from .. import image_params, store
 from ..models import Run, RunStep
-from ..providers import minimax_image
+from ..providers import ark_image, minimax_image
+
+IMAGE_PROVIDERS = {"minimax": minimax_image.generate, "ark": ark_image.generate}
 
 
 class Manager:
@@ -52,14 +54,26 @@ def execute(run_id: str) -> None:
         prompt = str((run.inputs or {}).get("prompt") or "").strip()
         if not prompt:
             raise RuntimeError("prompt 不能为空")
-        raw = store.run_artifact(run_id, "image.jpg")
-        generated = minimax_image.generate(
+        provider = IMAGE_PROVIDERS.get(str(model.get("provider") or ""))
+        if provider is None:
+            raise RuntimeError(f"图片模型 {model_id} 没有可用的适配器")
+        raw = store.run_artifact(run_id, "image.bin")
+        reference = None
+        ref_id = str((run.inputs or {}).get("reference_asset_id") or "")
+        if ref_id:
+            reference = store.asset_media_path(ref_id)
+        generated = provider(
             prompt,
             model=str(model["model"]),
             aspect=str(advanced.get("aspect") or "1:1"),
             area=str(advanced.get("area") or "2K"),
             output=raw,
+            reference=reference,
         )
+        suffix = ".png" if raw.read_bytes()[:4] == b"\x89PNG" else ".jpg"
+        image_path = raw.with_suffix(suffix)
+        raw.replace(image_path)
+        raw = image_path
         width, height = generated.get("width"), generated.get("height")
         if not width or not height:
             try:
@@ -68,7 +82,8 @@ def execute(run_id: str) -> None:
                     width, height = image.size
             except Exception:
                 width = height = None
-        asset = store.create_asset(raw.read_bytes(), f"image-{run_id}.jpg", "image", "image/jpeg")
+        mime = "image/png" if raw.suffix == ".png" else "image/jpeg"
+        asset = store.create_asset(raw.read_bytes(), f"image-{run_id}{raw.suffix}", "image", mime)
         run = store.read_run(run_id) or run
         run.status = "succeeded"
         run.step = "done"
@@ -99,12 +114,12 @@ def execute(run_id: str) -> None:
         traceback.print_exc()
 
 
-def create(prompt: str, model_id: str = "", aspect: str = "1:1", area: str = "2K", *, parent: Run | None = None) -> Run:
+def create(prompt: str, model_id: str = "", aspect: str = "1:1", area: str = "2K", *, parent: Run | None = None, reference_asset_id: str = "") -> Run:
     model = image_params.get_model(model_id or image_params.default_model())
     if model is None:
-        raise ValueError("没有可用的图片模型；请配置 MINIMAX_API_KEY")
+        raise ValueError("没有可用的图片模型；请在设置里配置对应厂商 key")
     if not model.get("available"):
-        raise ValueError("图片模型不可用；请配置 MINIMAX_API_KEY")
+        raise ValueError(f"图片模型不可用：{model.get('reason') or '请在设置里配置对应厂商 key'}")
     aspect = aspect if aspect in (model.get("aspects") or []) else "1:1"
     area = area if area in (model.get("areas") or []) else str(model.get("default_area") or "2K")
     run_id = store.new_id("img")
@@ -118,7 +133,7 @@ def create(prompt: str, model_id: str = "", aspect: str = "1:1", area: str = "2K
         status="queued",
         step="queued",
         progress=0.0,
-        inputs={"prompt": prompt},
+        inputs={"prompt": prompt, **({"reference_asset_id": reference_asset_id} if reference_asset_id else {})},
         advanced={"model": model["id"], "aspect": aspect, "area": area},
         steps=[RunStep(name="image", label="生成图片")],
         demo=False,

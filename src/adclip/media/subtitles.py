@@ -1,4 +1,4 @@
-"""SRT generation from the Ad+ Studio script."""
+"""SRT generation from the AdClip script."""
 from __future__ import annotations
 
 from pathlib import Path

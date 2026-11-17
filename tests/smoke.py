@@ -1,8 +1,8 @@
-"""End-to-end smoke test for the demo pipeline.
+"""End-to-end smoke test for the generation pipeline.
 
 Run with:
   PYTHONPATH=src .venv/bin/python tests/smoke.py
-It creates a temporary test video with ffmpeg, uploads it, runs the demo
+It creates a temporary test video with ffmpeg, uploads it, runs the synthetic
 pipeline, reads the storyboard, creates a persona, derives a version and
 stitches two clips.
 """
@@ -17,6 +17,7 @@ from pathlib import Path
 # Keep smoke runs out of the user's Ad+ data directory.
 _TEST_DATA = tempfile.mkdtemp(prefix="adclip-smoke-")
 os.environ["ADSTUDIO_DATA_DIR"] = _TEST_DATA
+os.environ["ADCLIP_TEST_MODE"] = "1"
 os.environ["ADSTUDIO_ASR"] = "0"
 os.environ["ADSTUDIO_VISION"] = "0"
 
@@ -42,11 +43,49 @@ def poll(client: TestClient, run_id: str, timeout: float = 30.0) -> dict:
     raise AssertionError(f"run {run_id} timed out")
 
 
+VIDEO_CAPS = {"text_to_video", "image_to_video", "reference_to_video"}
+IMAGE_CAPS = {"text_to_image", "image_to_image"}
+
+
+def check_catalogue(client: TestClient) -> None:
+    """Every model carries kind + capabilities; kinds, aliases and keys agree."""
+    rows = client.get("/models").json()["models"]
+    ids = [row["id"] for row in rows]
+    assert ids and len(ids) == len(set(ids)), "model ids must be unique"
+    for row in rows:
+        assert row["kind"] in {"video", "image"}, row
+        caps = set(row.get("capabilities") or [])
+        assert caps, row["id"]
+        allowed = VIDEO_CAPS if row["kind"] == "video" else IMAGE_CAPS
+        assert caps <= allowed, (row["id"], caps - allowed)
+
+    image_ids = {row["id"] for row in rows if row["kind"] == "image"}
+    alias_ids = {row["id"] for row in client.get("/image/models").json()["models"]}
+    assert alias_ids == image_ids, (alias_ids, image_ids)
+
+    seedream = next(row for row in rows if row["id"] == "ark.seedream-4.0")
+    assert seedream["kind"] == "image" and "text_to_image" in seedream["capabilities"]
+    assert seedream["available"] == bool(os.environ.get("ARK_API_KEY", "").strip())
+
+    settings_rows = client.get("/settings/models").json()["models"]
+    assert "ark.seedream-4.0" in {row["id"] for row in settings_rows}
+    assert any(row["kind"] == "image" for row in settings_rows)
+
+    # The production view ships no local placeholder model.
+    os.environ.pop("ADCLIP_TEST_MODE", None)
+    try:
+        production = {row["id"] for row in client.get("/models").json()["models"]}
+        assert "demo" not in production and "test.synthetic" not in production
+    finally:
+        os.environ["ADCLIP_TEST_MODE"] = "1"
+
+
 def main() -> None:
     client = TestClient(app)
     assert client.get("/health").json()["ok"] is True
     assert client.get("/models").json()["models"]
     assert client.get("/scenarios").json()["scenarios"]
+    check_catalogue(client)
 
     with tempfile.TemporaryDirectory() as tmp:
         one = Path(tmp) / "one.mp4"
@@ -75,6 +114,38 @@ def main() -> None:
         run = poll(client, res.json()["run"]["id"])
         assert run["status"] == "succeeded", run.get("error")
         assert run["result"]["video"].endswith("final.mp4")
+
+        # Subtitles default to off: no SRT, and QA says so instead of warning.
+        assert run["result"].get("srt") is None, run["result"].get("srt")
+        checks = {check["id"]: check for check in run["result"]["qa"]["checks"]}
+        assert checks["subtitles"]["status"] == "pass", checks["subtitles"]
+        assert "未启用" in checks["subtitles"].get("note", "")
+
+        # Turning them on delivers the sidecar SRT.
+        with_srt = client.post("/runs", json={
+            "scenario": "viral-remake",
+            "inputs": {"reference_asset_id": a["id"], "brief": "同一条片子，带字幕交付。"},
+            "advanced": {"duration": 5, "aspect": "9:16", "resolution": "720p", "generation_mode": "fast", "subtitle": "sidecar"},
+        })
+        assert with_srt.status_code == 202, with_srt.text
+        srt_run = poll(client, with_srt.json()["run"]["id"])
+        assert srt_run["status"] == "succeeded", srt_run.get("error")
+        assert (srt_run["result"].get("srt") or "").endswith("subtitles.srt")
+
+        # A post-only derive toggles it back off, then on again.
+        off = client.post(f"/runs/{srt_run['id']}/derive", json={"changes": [
+            {"field": "post.subtitle", "to": "off", "stage": "post"},
+        ]})
+        assert off.status_code == 200, off.text
+        off_run = off.json()["run"]
+        assert off_run["result"].get("srt") is None
+        assert any("字幕" in note for note in off_run["result"].get("post_notes") or [])
+
+        back_on = client.post(f"/runs/{off_run['id']}/derive", json={"changes": [
+            {"field": "post.subtitle", "to": "sidecar", "stage": "post"},
+        ]})
+        assert back_on.status_code == 200, back_on.text
+        assert (back_on.json()["run"]["result"].get("srt") or "").endswith("subtitles.srt")
 
         storyboard = client.get(f"/runs/{run['id']}/storyboard")
         assert storyboard.status_code == 200

@@ -25,7 +25,10 @@ def check(run_id: str) -> dict[str, Any]:
     add("aspect", "画幅", "pass" if facts.get("width") and facts.get("height") else "fail", {"width": facts.get("width"), "height": facts.get("height")})
     add("audio", "音轨", "pass" if facts.get("has_audio") else "fail", {"has_audio": facts.get("has_audio")})
     srt = store.run_artifact(run_id, "subtitles.srt")
-    add("subtitles", "字幕", "pass" if srt.is_file() and srt.stat().st_size > 0 else "warn", {"path": store.rel_to_data(srt)})
+    if str(advanced.get("subtitle") or "off") == "sidecar":
+        add("subtitles", "字幕", "pass" if srt.is_file() and srt.stat().st_size > 0 else "warn", {"path": store.rel_to_data(srt)})
+    else:
+        add("subtitles", "字幕", "pass", {"enabled": False, "path": None}, "未启用（按配置）")
     storyboard = store.read_json(store.run_dir(run_id) / "artifacts" / "storyboard.json", {}) or {}
     beats = storyboard.get("segments") or []
     add("segments", "分镜", "pass" if beats else "warn", {"count": len(beats)})
