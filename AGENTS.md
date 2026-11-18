@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.6` |
-| Python engine (`adclip.api.VERSION`) | `0.1.8` |
+| DSH plugin (`plugin/package.json`) | `0.5.12` |
+| Python engine (`adclip.api.VERSION`) | `0.1.9` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -51,6 +51,9 @@ DSH client
   `ADSTUDIO_DATA_DIR` to a temporary directory.
 - The plugin starts or restarts the engine. Do not start a second engine unless
   explicitly asked.
+- The supervisor passes the live Host URL to the sidecar as `DSH_WEB_URL` and
+  `ADSTUDIO_DSH_CHAT_URL`, so the engine uses the DSH text model/config of the
+  *current* Host instead of the old default port.
 
 ## Repository map
 
@@ -59,9 +62,9 @@ plugin/
   index.js                 DSH apply(): supervisor, proxy, tools, prompt sections
   client.js                AdClip React UI and all page CSS
   host/tools.js            adclip_* agent tools
-  host/proxy.js            Host proxy + /dsh/models, /dsh/chat bridge
+  host/proxy.js            Host proxy + /dsh/models, /dsh/chat, /dsh/vision
   host/supervisor.js       Python engine lifecycle, health and preflight
-  host/dsh.js              DSH llm catalogue + text chat bridge
+  host/dsh.js              DSH llm catalogue, text chat, image-attachment vision bridge
   host/preflight.js        ffmpeg/Python/dependency checks
   package.json             plugin metadata/version/dsh bundle declaration
   cordis.patch.yml         DSH bundle patch
@@ -79,11 +82,11 @@ src/adclip/
   intents.py               rule-first assistant changes for storyboard chat
   personas.py              persona CRUD
   image_params.py          image-model view over catalog
-  llm.py                   DSH/MiniMax text bridge
+  llm.py                   DSH/MiniMax/Doubao(Ark) text bridge
   media/
     ffmpeg.py              probe, normalize, trim, concat, audio strip/replace
     asr.py                 faster-whisper transcription/word timestamps
-    vision.py              MiniMax-M3 reference breakdown
+    vision.py              MiniMax-M3 → Doubao(Ark) → DSH keyframe labels
     subtitle.py            SRT generation
     stitch.py              ordered clip plans, fit modes, audio keep/mute
     minimax_files.py       MiniMax Files API upload for H3 references
@@ -153,6 +156,46 @@ dist/                      staged plugin artifacts (ignored)
 - Stitching is **not** exposed in the UI. It is the DSH tool
   `adclip_stitch_videos`; the backend `/stitch` and `/stitch/plan` routes remain.
 
+### Vision fallback
+
+- Fallback ladder, first success wins:
+  1. MiniMax-M3 (`MINIMAX_API_KEY`),
+  2. Doubao-Seed-2.1 pro/turbo/lite on Volcengine Ark (`ARK_API_KEY`,
+     `ADSTUDIO_VISION_ARK_ORDER`, default `pro,turbo,lite`; cached
+     `ModelNotOpen` models are skipped),
+  3. the Host `/adplus/api/dsh/vision` bridge (an image-capable DSH model),
+  4. heuristic analysis.
+- The DSH bridge admits JPEG frames through `ctx.attachments` and sends
+  `ImageBlock` content to the first DSH model whose `inputModalities` includes
+  `image` (currently `deepseek-flash`); it never picks a text-only model.
+- All paths share `src/adclip/media/vision.py`'s `VISION_PROMPT`: per-frame
+  shot size, camera, people/action, product/visibility, scene, composition,
+  on-screen text, continuity, confidence and unclear fields.
+- Failure never blocks analysis; `analysis.provider/model` records the actual
+  source (`minimax`, `ark`, `dsh`) and `analysis.warnings` carries the degraded
+  reason.
+- `catalog.vision_chain()` is the single ladder definition. It is exposed
+  through `GET /capabilities` (`scheduling.vision`), the
+  `adclip_list_capabilities` tool and the Settings page; keep those in sync.
+- DSH attachments persist; frame budget is adaptive (roughly one every 2.5s, min 4, max 12) with up to four refine frames for low-confidence/long beats, and MiniMax stays first.
+
+### Text/vision models (Doubao-Seed-2.1)
+
+- `src/adclip/providers/ark_text.py` owns the three Ark rows
+  (`ark.doubao-seed-2.1-pro|turbo|lite`), their capability tags
+  (`多模态模型/深度思考/视觉理解`, 1M context), `thinking.type` control and the
+  `ModelNotOpen` handling.
+- These rows are **not** in `catalog.rows()`; `catalog.text_rows()` feeds
+  `GET /text/models`, `GET /capabilities` (`text_models`) and the picker. The
+  video/image registry stays at 13 rows.
+- Engine routes: `GET /text/models`, `POST /text/chat` (ark only),
+  `POST /text/models/probe`. They are reached through the existing
+  `/adplus/api/*` proxy, so `plugin/host/proxy.js` needs no change.
+- `llm.py` order is DSH → MiniMax → Ark by default; an explicit
+  `text_model.provider == "ark"` (from `run.advanced.text_model`) puts Ark
+  first and falls back to DSH.
+- Activation state is cached in `data/text_models_state.json` (24h for `ok`, 10min for `not_open`). Right after activation Ark serves stale replicas that still answer `ModelNotOpen`, so `chat()` retries twice (1.5s/4s) and a proven `ok` row is never downgraded by a single 404.
+
 ### Model fallback
 
 - Image runs and free/video generation walk the enabled capability registry
@@ -191,9 +234,11 @@ Tool rules:
 
 ### Prompt sections
 
-`plugin/index.js` uses two separate system-prompt sections:
+`plugin/index.js` uses three separate system-prompt sections:
 
 - `adclip:remake-guidance` (order 3000) — remake preservation contract only.
+- `adclip:vision-guidance` (order 3005) — the reference-frame vision ladder and
+  the rule to report `provider/model` instead of asking the user.
 - `adclip:free-create-guidance` (order 3010) — image/video/stitch/asset tools.
 
 Keep them separate. Do not add free-create instructions to the remake section;
@@ -251,6 +296,7 @@ PYTHONPATH=src .venv/bin/python tests/minimax_h3.py
 PYTHONPATH=src .venv/bin/python tests/remake_h3.py
 PYTHONPATH=src .venv/bin/python tests/segment_edit.py
 PYTHONPATH=src .venv/bin/python tests/fallback.py
+PYTHONPATH=src .venv/bin/python tests/ark_text.py
 PYTHONPATH=src .venv/bin/python tests/script_rules.py
 PYTHONPATH=src .venv/bin/python tests/smoke.py
 node --check plugin/client.js

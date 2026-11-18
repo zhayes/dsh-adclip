@@ -46,6 +46,7 @@ export class EngineSupervisor {
   constructor(config = {}, options = {}) {
     this.config = config || {}
     this.pluginRoot = options.pluginRoot || null
+    this.dshWebUrl = options.dshWebUrl || ''
     this.dataDir = this.config.dataDir || defaultDataDir()
     const fixed = Number(this.config.port)
     this.fixedPort = Number.isInteger(fixed) && fixed > 0 && fixed < 65536 ? fixed : 0
@@ -196,6 +197,7 @@ export class EngineSupervisor {
     if (this.child) return
     const args = ['-m', 'adclip.api', '--host', '127.0.0.1', '--port', String(this.port), '--graceful-timeout', '5']
     this.log(`spawn ${this.python} ${args.join(' ')} (cwd ${this.moduleRoot})`)
+    const dshWebUrl = typeof this.dshWebUrl === 'function' ? this.dshWebUrl() : this.dshWebUrl
     const child = spawn(this.python, args, {
       cwd: this.moduleRoot,
       env: {
@@ -207,6 +209,14 @@ export class EngineSupervisor {
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         ADSTUDIO_DATA_DIR: this.dataDir,
+        // The sidecar must call the Host that is actually serving this DSH
+        // instance. Without this the engine falls back to a stale localhost
+        // port and text/script generation fails with an HTTP 503.
+        ...(dshWebUrl ? {
+          DSH_WEB_URL: dshWebUrl,
+          ADSTUDIO_DSH_CHAT_URL: dshWebUrl.replace(/\/$/, '') + '/adplus/api/dsh/chat',
+          ADSTUDIO_DSH_VISION_URL: dshWebUrl.replace(/\/$/, '') + '/adplus/api/dsh/vision',
+        } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',

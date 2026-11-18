@@ -2,6 +2,11 @@
 
 ## Implemented in this slice
 
+- Doubao-Seed-2.1（方舟 pro/turbo/lite）接入文本与视觉：`providers/ark_text.py`、
+  `GET /text/models`、`POST /text/chat`、`POST /text/models/probe`；视觉链变为
+  MiniMax-M3 → Doubao → DSH 视觉桥 → 启发式，并经 `scheduling.vision`、
+  `adclip_list_capabilities`、`adclip_get_analysis`、设置页暴露给 DSH 调度。
+
 - New `src/adclip/` FastAPI service, no legacy imports.
 - DSH plugin installed and active (`main:adplus`, `sidebar.panellist:adplus`).
 - Demo pipeline: upload → analyze → script → generate → post → QA.
@@ -73,6 +78,12 @@
   `adclip_create_image`, `adclip_create_video`, `adclip_list_assets` and
   `adclip_list_personas`. The remake and free-create prompt sections are
   separate so the remake contract is unchanged.
+- Reference keyframe vision now falls back from MiniMax-M3 to an image-capable
+  DSH model through `/adplus/api/dsh/vision`; frames arrive as durable
+  `ImageBlock` attachments, use the shared storyboard prompt, and still degrade
+  to heuristic analysis if no image model/bridge is available. Frame count is
+  adaptive by duration (roughly one every 2.5s, min 4, max 12) with up to four
+  refine frames for low-confidence or long beats.
 - Image and free-video generation now fall back through the enabled model
   capability registry. A provider-level error (insufficient balance, auth,
   rate limit, 402/403/429) skips that provider and the next compatible model

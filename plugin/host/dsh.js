@@ -56,5 +56,58 @@ export function createDshBridge(ctx) {
     return { provider: selectedProvider, model: selectedModel, text }
   }
 
-  return { list, chat }
+  async function vision({ frames, prompt, maxTokens = 1200 }) {
+    if (!llm) throw new Error('DSH llm service is not mounted')
+    const attachments = ctx.get('attachments')
+    if (!attachments) throw new Error('DSH attachment service is not mounted')
+    const configuredMax = Math.min(12, Number(attachments.imageLimits?.maxImagesPerMessage) || 12)
+    const requested = Array.isArray(frames) ? frames.slice(0, configuredMax) : []
+    if (!requested.length) throw new Error('vision frames are required')
+    if (!requested.every((frame) => frame && typeof frame.data === 'string' && frame.data.length > 0)) {
+      throw new Error('vision frames need base64 data')
+    }
+    const catalogue = await list()
+    const models = (catalogue.providers || []).flatMap((provider) =>
+      (provider.models || []).map((model) => ({
+        provider: provider.id,
+        id: model.id,
+        name: model.name || model.id,
+        image: (model.inputModalities || []).includes('image'),
+      })),
+    )
+    const imageModels = models.filter((model) => model.image)
+    if (!imageModels.length) throw new Error('no DSH model accepts image input')
+    let selection = null
+    try { selection = defaults?.currentSelection?.() || null } catch { selection = null }
+    const current = selection && imageModels.find((model) => model.provider === selection.provider && model.id === selection.model)
+    const preferred = current
+      || imageModels.find((model) => model.id === 'deepseek-flash')
+      || imageModels[0]
+    const admitted = await attachments.admitPromptContent([
+      { type: 'text', text: String(prompt || '') },
+      ...requested.map((frame, index) => ({
+        type: 'image',
+        mediaType: String(frame.mediaType || 'image/jpeg'),
+        data: String(frame.data),
+        name: String(frame.name || `${frame.id || `frame${index}`}.jpg`),
+      })),
+    ])
+    const system = '你是广告分镜视觉标签器。只输出 JSON，不要解释，不要 markdown。'
+    let text = ''
+    for await (const chunk of llm.stream({
+      provider: preferred.provider,
+      model: preferred.id,
+      system,
+      messages: [{ role: 'user', content: admitted }],
+      maxTokens,
+    })) {
+      if (chunk.type === 'text-delta') text += chunk.text
+      if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
+        throw new Error(chunk.reason.failure?.message || 'DSH vision call failed')
+      }
+    }
+    return { provider: preferred.provider, model: preferred.id, text }
+  }
+
+  return { list, chat, vision }
 }

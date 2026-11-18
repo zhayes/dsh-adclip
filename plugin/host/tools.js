@@ -624,9 +624,9 @@ export function registerAdclipTools(ctx, supervisor) {
 
   disposers.push(ctx.tools.register(defineTool({
     name: 'adclip_list_capabilities',
-    description: 'List the AdClip model capability registry for inspection. Not for manual model selection; adclip_remake_video chooses automatically.',
+    description: 'List the AdClip model capability registry for inspection: video/image generation models, Doubao-Seed-2.1 text/vision rows with their capability tags, and the vision fallback ladder (scheduling.vision). Not for manual model selection; adclip_remake_video chooses automatically.',
     parameters: {
-      kind: { type: 'string', enum: ['video', 'image'], description: 'Optional model kind filter.' },
+      kind: { type: 'string', enum: ['video', 'image', 'text', 'vision'], description: 'Optional model kind filter.' },
       remake_only: { type: 'boolean', description: 'Only show models that can participate in a remake.' },
     },
     output: {
@@ -654,12 +654,23 @@ export function registerAdclipTools(ctx, supervisor) {
               },
             },
           },
+          text_models: { type: 'array', items: { type: 'json' } },
+          scheduling: { type: 'json' },
         },
       },
-      render: (_args, value) => [{
-        type: 'text',
-        text: value.models.map((m) => `${m.id} · ${m.tier} · ${m.available ? '可用' : '不可用'}`).join('\n') || '没有模型',
-      }],
+      render: (_args, value) => {
+        const lines = value.models.map((m) => `${m.id} · ${m.tier} · ${m.available ? '可用' : '不可用'}`)
+        const texts = (value.text_models || []).map((m) => `${m.id} · ${(m.tags || []).join('/')} · ${m.available ? '可用' : '不可用'}`)
+        const chain = ((value.scheduling || {}).vision || []).map((m, index) => `${index + 1}. ${m.label}${m.available ? '' : '（不可用）'}`)
+        return [{
+          type: 'text',
+          text: [
+            lines.length ? lines.join('\n') : '没有生成模型',
+            texts.length ? `文本/视觉模型：\n${texts.join('\n')}` : '',
+            chain.length ? `视觉降级链：${chain.join(' → ')}` : '',
+          ].filter(Boolean).join('\n'),
+        }]
+      },
     },
     async execute(args) {
       const data = await listCapabilities(supervisor)
@@ -680,7 +691,19 @@ export function registerAdclipTools(ctx, supervisor) {
           outputs: m.output || {},
           supports: (m.remake || {}).supports || [],
         }))
-      return { models }
+      const textModels = ['', 'text', 'vision'].includes(kind)
+        ? (data.text_models || []).map((m) => ({
+            id: m.id,
+            label: m.label || m.id,
+            provider: m.provider || '',
+            ark_model: m.ark_model || '',
+            tags: m.tags || [],
+            available: Boolean(m.available),
+            status: m.status || '',
+            reason: m.reason || '',
+          }))
+        : []
+      return { models, text_models: textModels, scheduling: data.scheduling || { vision: [] } }
     },
   })))
 
@@ -699,6 +722,9 @@ export function registerAdclipTools(ctx, supervisor) {
           available: { type: 'boolean', required: true },
           mode: { type: 'string' },
           degraded: { type: 'boolean' },
+          provider: { type: 'string' },
+          model: { type: 'string' },
+          reason: { type: 'string' },
           shots: { type: 'array', required: true, items: { type: 'json' } },
           product: { type: 'string' },
           cast: { type: 'array', items: { type: 'string' } },
@@ -709,7 +735,7 @@ export function registerAdclipTools(ctx, supervisor) {
       render: (_args, value) => [{
         type: 'text',
         text: value.available
-          ? `拆解：${value.shots.length} 镜 · 商品 ${value.product || '—'} · 人物 ${(value.cast || []).join('、') || '—'}`
+          ? `拆解：${value.shots.length} 镜 · 商品 ${value.product || '—'} · 人物 ${(value.cast || []).join('、') || '—'} · 视觉 ${value.provider || '启发式'}${value.model ? '/' + value.model : ''}`
           : '还没有拆解数据',
       }],
     },
@@ -723,6 +749,9 @@ export function registerAdclipTools(ctx, supervisor) {
         available: Boolean(doc.available),
         mode: (doc.analysis || {}).mode || '',
         degraded: Boolean((doc.analysis || {}).degraded),
+        provider: (doc.analysis || {}).provider || '',
+        model: (doc.analysis || {}).model || '',
+        reason: (doc.analysis || {}).reason || '',
         shots,
         product: products[0] || '',
         cast: [...new Set(casts)].slice(0, 4),

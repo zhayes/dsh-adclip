@@ -37,6 +37,55 @@ def check_registry() -> None:
         assert "price" not in row and "pricing" not in row and "cost" not in row, row["id"]
 
 
+def check_text_models() -> None:
+    """Doubao-Seed-2.1 rows and the vision ladder are exposed but separate."""
+    ids = [row["id"] for row in catalog.rows()]
+    assert len(ids) == 13, ids
+    assert not any(row.startswith("ark.doubao") for row in ids), ids
+
+    os.environ.pop("ARK_API_KEY", None)
+    os.environ.pop("MINIMAX_API_KEY", None)
+    os.environ.pop("ADSTUDIO_DSH_CHAT_URL", None)
+    rows = catalog.text_rows()
+    assert [row["id"] for row in rows] == [
+        "ark.doubao-seed-2.1-pro",
+        "ark.doubao-seed-2.1-turbo",
+        "ark.doubao-seed-2.1-lite",
+    ], rows
+    for row in rows:
+        assert row["tags"] == ["多模态模型", "深度思考", "视觉理解"], row
+        assert row["available"] is False, row
+        assert row["endpoint"].endswith("/chat/completions"), row
+        assert "vision" in row["capabilities"] and "thinking" in row["capabilities"], row
+
+    chain = catalog.vision_chain()
+    assert [row["id"] for row in chain] == [
+        "minimax.m3",
+        "ark.doubao-seed-2.1-pro",
+        "ark.doubao-seed-2.1-turbo",
+        "ark.doubao-seed-2.1-lite",
+        "dsh.vision",
+        "heuristic",
+    ], chain
+    assert chain[-1]["available"] is True
+
+    os.environ["ARK_API_KEY"] = "test-key"
+    try:
+        manifest = capabilities.manifest(
+            catalog.rows(),
+            text_models=catalog.text_rows(),
+            vision_chain=catalog.vision_chain(),
+        )
+        assert len(manifest["models"]) == 13
+        assert [row["id"] for row in manifest["text_models"]] == [row["id"] for row in rows]
+        assert manifest["text_models"][0]["available"] is True
+        assert [row["id"] for row in manifest["scheduling"]["vision"]] == [row["id"] for row in chain]
+        assert all(row["id"] in {r["id"] for r in manifest["models"]} | {r["id"] for r in manifest["text_models"]}
+                   for row in manifest["scheduling"]["vision"] if row["provider"] == "ark")
+    finally:
+        os.environ.pop("ARK_API_KEY", None)
+
+
 def check_params() -> None:
     assert capabilities.validate_params("minimax.h3", {"resolution": "2K", "duration": "reference"}) == {
         "resolution": "2K",
@@ -106,6 +155,7 @@ def check_prompt() -> None:
 
 def main() -> None:
     check_registry()
+    check_text_models()
     check_params()
     check_audio_policy()
     check_selection()

@@ -11,7 +11,13 @@ export const inject = ['webServer', 'tools', 'systemPrompt']
 const pluginRoot = path.dirname(fileURLToPath(import.meta.url))
 
 export function apply(ctx, config = {}) {
-  const supervisor = new EngineSupervisor(config, { pluginRoot })
+  const currentDshWebUrl = () => {
+    const port = Number(ctx.webServer && ctx.webServer.port)
+    if (!port) return ''
+    const host = String((ctx.webServer && ctx.webServer.host) || '127.0.0.1')
+    return `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`
+  }
+  const supervisor = new EngineSupervisor(config, { pluginRoot, dshWebUrl: currentDshWebUrl })
   const dsh = createDshBridge(ctx)
   const boot = { token: supervisor.token, base: '/adplus/api', media: '/adplus/media' }
 
@@ -53,6 +59,17 @@ export function apply(ctx, config = {}) {
       '复刻请求始终优先 adclip_remake_video，不要用自由创作工具替代复刻，也不要改变复刻的保留契约。',
     ].join('\n'),
   }), 'adplus-studio-create-prompt')
+
+  ctx.effect(() => ctx.systemPrompt.section({
+    name: 'adclip:vision-guidance',
+    order: 3005,
+    interpolate: false,
+    text: [
+      '【AdClip 参考片拆解视觉链】',
+      '视觉标签按 MiniMax-M3 → Doubao-Seed-2.1（pro → turbo → lite，火山方舟）→ DSH 视觉桥 → 启发式 自动降级。',
+      '不要询问用户选择视觉模型；用 adclip_get_analysis 读取 provider/model，degraded 时说明降级到启发式的原因。',
+    ].join('\n'),
+  }), 'adplus-studio-vision-prompt')
 
   ctx.effect(() => ctx.webServer.tapIndex((html) => html.replace(
     '</body>',

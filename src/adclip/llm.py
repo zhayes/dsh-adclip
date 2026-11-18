@@ -1,8 +1,9 @@
-"""MiniMax text helper for structured gag/script generation.
+"""Text helpers for structured gag/script generation.
 
-This reuses the same MiniMax key as the video adapter; it is not a second
-provider configuration. When the key is absent or the call fails, callers fall
-back to deterministic demo content rather than blocking generation.
+Order of preference: the DSH bridge (the Host's own LLM) first, then MiniMax,
+then Doubao-Seed-2.1 on Volcengine Ark. An explicit ``text_model`` selection
+(local UI / run.advanced.text_model) wins over the default order, and any
+failure falls through to the next provider instead of blocking the run.
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ import re
 from typing import Any
 
 import httpx
+
+from .providers import ark_text
 
 BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com").rstrip("/")
 MODEL = os.environ.get("ADSTUDIO_TEXT_MODEL", "MiniMax-M3")
@@ -23,6 +26,8 @@ LAST_MODEL = ""
 
 def available() -> bool:
     if TEXT_PROVIDER in {"dsh", "auto"} and DSH_URL:
+        return True
+    if TEXT_PROVIDER in {"ark", "auto"} and ark_text.available():
         return True
     return bool(os.environ.get("MINIMAX_API_KEY", "").strip())
 
@@ -36,6 +41,8 @@ def provider_label() -> str:
         return "dsh"
     if os.environ.get("MINIMAX_API_KEY", "").strip():
         return "minimax"
+    if TEXT_PROVIDER in {"ark", "auto"} and ark_text.available():
+        return "ark"
     return "none"
 
 
@@ -105,20 +112,49 @@ def _chat_minimax(system: str, user: str, *, max_tokens: int, temperature: float
         return text
 
 
+def _chat_ark(system: str, user: str, *, max_tokens: int, temperature: float, model: str) -> str:
+    global LAST_ERROR, LAST_MODEL
+    result = ark_text.chat(
+        system,
+        [{"role": "user", "content": user}],
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        timeout=90.0,
+    )
+    LAST_MODEL = str(result.get("model") or model)
+    return str(result.get("text") or "")
+
+
+def _missing_ark_key() -> str:
+    raise RuntimeError("未配置 ARK_API_KEY")
+
+
 def chat(system: str, user: str, *, max_tokens: int = 1600, temperature: float = 0.3, text_model: dict[str, str] | None = None) -> str:
-    global LAST_ERROR
+    global LAST_ERROR, LAST_MODEL
     LAST_ERROR = ""
-    errors = []
-    if TEXT_PROVIDER != "minimax" and DSH_URL:
+    selected = _normalize_text_model(text_model)
+    ark_row = ark_text.row_for(selected["model"]) if selected and selected.get("provider") == "ark" else None
+    steps: list[tuple[str, Any]] = []
+    if TEXT_PROVIDER == "ark" or ark_row is not None:
+        if ark_text.available():
+            row = ark_row or ark_text.row_for("pro")
+            steps.append(("Ark", lambda row=row: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(row["id"]))))
+        else:
+            steps.append(("Ark", _missing_ark_key))
+    if TEXT_PROVIDER in {"auto", "dsh"} or (selected and selected.get("provider") not in {None, "ark"}):
+        if DSH_URL:
+            steps.append(("DSH", lambda: _chat_dsh(system, user, max_tokens=max_tokens, temperature=temperature, text_model=selected)))
+    if TEXT_PROVIDER in {"auto", "minimax"} and os.environ.get("MINIMAX_API_KEY", "").strip():
+        steps.append(("MiniMax", lambda: _chat_minimax(system, user, max_tokens=max_tokens, temperature=temperature)))
+    if TEXT_PROVIDER == "auto" and ark_row is None and ark_text.available():
+        steps.append(("Ark", lambda: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(ark_text.row_for("pro")["id"]))))
+    errors: list[str] = []
+    for label, step in steps:
         try:
-            return _chat_dsh(system, user, max_tokens=max_tokens, temperature=temperature, text_model=_normalize_text_model(text_model))
+            return step()
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"DSH: {type(exc).__name__}: {exc}")
-    if TEXT_PROVIDER != "dsh" and os.environ.get("MINIMAX_API_KEY", "").strip():
-        try:
-            return _chat_minimax(system, user, max_tokens=max_tokens, temperature=temperature)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"MiniMax: {type(exc).__name__}: {exc}")
+            errors.append(f"{label}: {type(exc).__name__}: {exc}"[:240])
     LAST_ERROR = " | ".join(errors)[:500] or "no text provider configured"
     raise RuntimeError(LAST_ERROR)
 

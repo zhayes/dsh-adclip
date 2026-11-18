@@ -242,6 +242,22 @@ window.__ModuleLoader__.load({
 .adp-model-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:0;background:transparent;color:var(--dsw-alias-label-primary);text-align:left;border-radius:7px;padding:7px 8px;font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
 .adp-model-option:hover,.adp-model-option.on{background:var(--dsw-alias-bg-layer-2)}
 .adp-model-option.on{color:#E2B96F}
+.adp-model-left{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+.adp-model-right{display:flex;align-items:center;gap:6px;flex:none}
+.adp-model-tag{font:9.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:1px 5px;border-radius:999px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 80%,transparent);color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.adp-model-off{font-size:9.5px;color:var(--dsw-alias-state-warn-primary);white-space:nowrap}
+.adp-model-tags{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 3px}
+.adp-chain{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px;margin-top:8px}
+.adp-chain-step{display:flex;align-items:center;gap:6px}
+.adp-chain-node{display:flex;flex-direction:column;gap:2px;padding:6px 9px;border-radius:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 85%,transparent);background:var(--dsw-alias-bg-layer-1)}
+.adp-chain-node.on{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 45%,transparent)}
+.adp-chain-node.off{opacity:.62}
+.adp-chain-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-faint,var(--dsw-alias-label-secondary))}
+.adp-chain-node.on .adp-chain-dot{background:var(--dsw-alias-state-success-primary)}
+.adp-chain-name{font-size:10.5px;font-weight:600}
+.adp-chain-state{font-size:9.5px;color:var(--dsw-alias-label-secondary)}
+.adp-chain-arrow{color:var(--dsw-alias-label-secondary);font-size:11px}
+.adp-textmodel-row{align-items:center}
 .adp-model-check{font-size:10px;color:#C99B54;flex:0 0 auto}
 .adp-chat-composer .adp-composer-count{margin-left:auto;margin-right:9px;font-size:10px;color:var(--dsw-alias-label-secondary);opacity:.75}
 .adp-send{flex:0 0 auto;width:34px;height:34px;border:0;border-radius:50%;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font-size:17px;font-weight:700;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
@@ -766,19 +782,31 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function dshTextModels(dsh) {
-      if (!dsh || !dsh.available) return []
+    /** DSH catalogue plus the engine's Doubao-Seed-2.1 rows (tags kept). */
+    function dshTextModels(dsh, textModels) {
       const rows = []
-      for (const provider of dsh.providers || []) {
-        for (const model of provider.models || []) {
-          rows.push({ provider: provider.id, providerName: provider.name || provider.id, model: model.id, name: model.name || model.id })
+      if (dsh && dsh.available) {
+        for (const provider of dsh.providers || []) {
+          for (const model of provider.models || []) {
+            rows.push({ provider: provider.id, providerName: provider.name || provider.id, model: model.id, name: model.name || model.id, tags: [], status: '' })
+          }
         }
+      }
+      for (const model of textModels || []) {
+        rows.push({
+          provider: model.provider || 'ark',
+          providerName: model.provider === 'ark' ? '火山方舟' : (model.provider || ''),
+          model: model.id,
+          name: model.label || model.id,
+          tags: model.tags || [],
+          status: model.status || '',
+        })
       }
       return rows
     }
 
-    function defaultDshTextModel(dsh) {
-      const rows = dshTextModels(dsh)
+    function defaultDshTextModel(dsh, textModels) {
+      const rows = dshTextModels(dsh, textModels)
       if (!rows.length) return null
       const selected = dsh && dsh.selection
       if (selected && rows.some((row) => row.provider === selected.provider && row.model === selected.model)) {
@@ -791,8 +819,8 @@ window.__ModuleLoader__.load({
       return value && value.provider && value.model ? value.provider + '|' + value.model : ''
     }
 
-    function TextModelSelect({ dsh, value, onChange }) {
-      const rows = dshTextModels(dsh)
+    function TextModelSelect({ dsh, textModels, value, onChange }) {
+      const rows = dshTextModels(dsh, textModels)
       const [open, setOpen] = useState(false)
       const rootRef = useRef(null)
       useEffect(() => {
@@ -807,7 +835,7 @@ window.__ModuleLoader__.load({
         }
       }, [open])
       if (!rows.length) return null
-      const fallback = defaultDshTextModel(dsh)
+      const fallback = defaultDshTextModel(dsh, textModels)
       const selected = value && rows.some((row) => row.provider === value.provider && row.model === value.model) ? value : fallback
       const selectedRow = rows.find((row) => row.provider === selected.provider && row.model === selected.model) || rows[0]
       const groups = new Map()
@@ -842,7 +870,16 @@ window.__ModuleLoader__.load({
               'aria-selected': row.provider === selected.provider && row.model === selected.model,
               className: 'adp-model-option' + (row.provider === selected.provider && row.model === selected.model ? ' on' : ''),
               onClick: () => { onChange({ provider: row.provider, model: row.model }); setOpen(false) },
-            }, h('span', null, row.name), row.provider === selected.provider && row.model === selected.model ? h('span', { className: 'adp-model-check' }, '✓') : null))
+            },
+              h('span', { className: 'adp-model-left' },
+                h('span', { className: 'adp-model-label' }, row.name),
+                (row.tags || []).map((tag) => h('span', { key: tag, className: 'adp-model-tag' }, tag))
+              ),
+              h('span', { className: 'adp-model-right' },
+                row.status === 'not_open' ? h('span', { className: 'adp-model-off' }, '未开通') : null,
+                row.provider === selected.provider && row.model === selected.model ? h('span', { className: 'adp-model-check' }, '✓') : null
+              )
+            ))
           ))
         ) : null
       )
@@ -1576,7 +1613,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function TextTab({ dsh, onStarted, onRefreshAssets }) {
+    function TextTab({ dsh, textModels, onStarted, onRefreshAssets }) {
       const [thread, setThread] = useState([])
       const [composer, setComposer] = useState('')
       const [images, setImages] = useState([])
@@ -1586,7 +1623,7 @@ window.__ModuleLoader__.load({
       const input = useRef(null)
       const scrollRef = useRef(null)
       const composerRef = useRef(null)
-      const selectedTextModel = textModel || defaultDshTextModel(dsh)
+      const selectedTextModel = textModel || defaultDshTextModel(dsh, textModels)
       const hasTextModel = Boolean(selectedTextModel)
       const lastProposal = [...thread].reverse().find((message) => message.proposal)?.proposal || null
       useEffect(() => {
@@ -1666,7 +1703,15 @@ window.__ModuleLoader__.load({
             const data = await api('/runs', { method: 'POST', body: {
               scenario: 'text-to-video',
               inputs: { brief: proposal.prompt, reference_image_asset_id: images[0] ? images[0].id : null },
-              advanced: { aspect: proposal.aspect || '9:16', duration: proposal.duration || 8, resolution: proposal.resolution || '720p', model: 'auto' },
+              advanced: {
+                aspect: proposal.aspect || '9:16',
+                duration: proposal.duration || 8,
+                resolution: proposal.resolution || '720p',
+                model: 'auto',
+                ...(selectedTextModel && selectedTextModel.provider === 'ark'
+                  ? { text_model: { provider: 'ark', model: selectedTextModel.model } }
+                  : {}),
+              },
             } })
             onStarted(data.run)
           }
@@ -1691,14 +1736,23 @@ window.__ModuleLoader__.load({
             role: message.role,
             content: [{ type: 'text', text: String(message.text || '').slice(0, 1200) }],
           }))
-          const data = await api('/dsh/chat', { method: 'POST', body: {
-            system: systemPrompt,
-            messages,
-            maxTokens: 900,
-            provider: selectedTextModel && selectedTextModel.provider,
-            model: selectedTextModel && selectedTextModel.model,
-          } })
-          const raw = String((data.dsh && data.dsh.text) || '')
+          const arkSelected = Boolean(selectedTextModel && selectedTextModel.provider === 'ark')
+          const data = arkSelected
+            ? await api('/text/chat', { method: 'POST', body: {
+                system: systemPrompt,
+                messages,
+                maxTokens: 900,
+                provider: 'ark',
+                model: selectedTextModel.model,
+              } })
+            : await api('/dsh/chat', { method: 'POST', body: {
+                system: systemPrompt,
+                messages,
+                maxTokens: 900,
+                provider: selectedTextModel && selectedTextModel.provider,
+                model: selectedTextModel && selectedTextModel.model,
+              } })
+          const raw = String((data.dsh && data.dsh.text) || data.text || '')
           const parsed = parseReply(raw)
           const proposal = parsed.action !== 'none' && parsed.prompt ? {
             kind: parsed.action,
@@ -1774,7 +1828,7 @@ window.__ModuleLoader__.load({
               ),
               h('div', { className: 'adp-composer-foot' },
                 h('div', { className: 'adp-composer-left' },
-                  h(TextModelSelect, { dsh, value: selectedTextModel, onChange: setTextModel }),
+                  h(TextModelSelect, { dsh, textModels, value: selectedTextModel, onChange: setTextModel }),
                   !hasTextModel ? h('span', { className: 'adp-hint' }, '未配置文本模型') : null
                 ),
                 h('div', { className: 'adp-composer-right' },
@@ -2182,7 +2236,72 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function SettingsTab({ health, models, assets, onRefresh, engine, onSetup }) {
+    const TEXT_STATUS_LABEL = { ok: '已开通', not_open: '未开通', no_key: '未配置 key', unknown: '未检测', error: '调用异常', rate: '限流' }
+
+    /** The fallback ladder DSH schedules from, rendered read-only. */
+    function VisionChainCard({ scheduling }) {
+      const chain = (scheduling && scheduling.vision) || []
+      if (!chain.length) return null
+      return h('div', { className: 'adp-card adp-col', style: { margin: '4px 0 8px' } },
+        h('div', { className: 'adp-row' },
+          h('div', { className: 'adp-h2 adp-grow' }, '参考片拆解视觉链'),
+          h('span', { className: 'adp-small adp-muted' }, '按顺序自动降级，首个成功即停止')
+        ),
+        h('div', { className: 'adp-chain' }, chain.map((stage, index) => h('div', { key: stage.id, className: 'adp-chain-step' },
+          h('div', { className: 'adp-chain-node' + (stage.available ? ' on' : ' off'), title: stage.reason || '' },
+            h('span', { className: 'adp-chain-dot' }),
+            h('span', { className: 'adp-chain-name' }, stage.label),
+            h('span', { className: 'adp-chain-state' }, stage.available ? '可用' : (stage.reason || '不可用'))
+          ),
+          index < chain.length - 1 ? h('span', { className: 'adp-chain-arrow' }, '→') : null
+        ))),
+        h('div', { className: 'adp-small adp-muted', style: { marginTop: 6 } }, 'DSH 可通过 adclip_get_analysis 读到实际使用的 provider/model。')
+      )
+    }
+
+    /** Doubao-Seed-2.1 rows: capability tags, context, endpoint, activation. */
+    function TextModelsCard({ textModels, onRefresh }) {
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState('')
+      const rows = textModels || []
+      const probe = async () => {
+        setBusy(true); setNote('')
+        try {
+          const data = await api('/text/models/probe', { method: 'POST', body: {} })
+          const results = data.results || []
+          const ok = results.filter((row) => row.ok).length
+          setNote(ok ? `${ok}/${results.length} 个模型已开通` : '都没有开通：去方舟控制台「开通管理」开通 Doubao-Seed-2.1')
+          await onRefresh()
+        } catch (e) { setNote(String(e.message || e)) } finally { setBusy(false) }
+      }
+      return h('div', { className: 'adp-card adp-col', style: { margin: '4px 0 8px' } },
+        h('div', { className: 'adp-row' },
+          h('div', null,
+            h('div', { className: 'adp-h2' }, '文本 / 视觉模型'),
+            h('div', { className: 'adp-small adp-muted' }, 'Doubao-Seed-2.1 系列 · 用 ARK_API_KEY 直接调 /chat/completions')
+          ),
+          h('div', { className: 'adp-grow' }),
+          h('button', { className: 'adp-btn ghost', disabled: busy, onClick: probe }, busy ? '检测中…' : '检测开通状态')
+        ),
+        rows.length ? rows.map((model) => {
+          const status = model.status === 'ok' ? 'ok' : (model.available ? 'unknown' : (model.status || 'no_key'))
+          const badge = TEXT_STATUS_LABEL[status] || status
+          return h('div', { key: model.id, className: 'adp-provider-model adp-textmodel-row' },
+            h('div', { className: 'adp-grow' },
+              h('div', { className: 'adp-provider-model-name' }, model.label || model.id),
+              h('div', { className: 'adp-model-tags' }, (model.tags || []).map((tag) => h('span', { key: tag, className: 'adp-model-tag' }, tag))),
+              h('div', { className: 'adp-small adp-muted' }, '上下文 ' + (model.context || '—') + ' · ' + (model.endpoint || '') + ' · model=' + (model.ark_model || '')),
+              model.reason ? h('div', { className: 'adp-small adp-faint' }, model.reason) : null
+            ),
+            h('span', { className: 'adp-badge' + (status === 'ok' ? ' ok' : (status === 'not_open' || status === 'no_key' ? ' warn' : '')) }, badge)
+          )
+        }) : h('div', { className: 'adp-small adp-muted' }, '正在读取模型列表…'),
+        note ? h('div', { className: 'adp-small adp-muted' }, note) : null,
+        h('div', { className: 'adp-small adp-faint' }, '打开本页会自动检测一次；刚开通时方舟可能要 1–2 分钟同步，未开通时视觉链自动跳到 DSH 视觉桥、文本生成回落到 DSH 模型。')
+      )
+    }
+
+    function SettingsTab({ health, models, assets, textModels, scheduling, onRefresh, engine, onSetup }) {
       const [engineBusy, setEngineBusy] = useState(false)
       const [keys, setKeys] = useState([])
       const [values, setValues] = useState({})
@@ -2193,6 +2312,18 @@ window.__ModuleLoader__.load({
       const [refreshing, setRefreshing] = useState(false)
       useEffect(() => {
         api('/settings/keys').then((d) => setKeys(d.keys || [])).catch((e) => setErr(String(e.message || e)))
+      }, [])
+      // Refresh the Ark activation state in the background on every visit, so a
+      // model the user just enabled in the console shows up without a manual check.
+      useEffect(() => {
+        let alive = true
+        ;(async () => {
+          try {
+            await api('/text/models/probe', { method: 'POST', body: {} })
+            if (alive) await onRefresh()
+          } catch { /* keep the last known state */ }
+        })()
+        return () => { alive = false }
       }, [])
       const providers = [
         { id: 'minimax', name: 'MiniMax', key: 'MINIMAX_API_KEY', desc: 'H3 原生对白 / Hailuo 图生视频 / H3 Image' },
@@ -2297,6 +2428,9 @@ window.__ModuleLoader__.load({
             ) : null
           )
         })),
+        h('div', { className: 'adp-section-head', style: { marginTop: 20 } }, h('span', { className: 'adp-section-title' }, '文本 / 视觉调度'), h('span', { className: 'adp-section-note' }, '模型来源与降级顺序')),
+        h(VisionChainCard, { scheduling }),
+        h(TextModelsCard, { textModels, onRefresh }),
         notice ? h('div', { className: 'adp-notice' }, notice) : null,
         err ? h('div', { className: 'adp-error', style: { marginTop: 10 } }, err) : null,
         h('div', { className: 'adp-hint', style: { marginTop: 12 } }, '密钥只保存在本机数据目录的 settings.json（权限 0600）；不会回显完整值。生产版应迁移到系统 Keychain。')
@@ -2408,6 +2542,8 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = useState(null)
       const [err, setErr] = useState('')
       const [engine, setEngine] = useState(null)
+      const [textModels, setTextModels] = useState([])
+      const [scheduling, setScheduling] = useState(null)
       const [forceSetup, setForceSetup] = useState(false)
       const [setupBusy, setSetupBusy] = useState('')
 
@@ -2416,8 +2552,14 @@ window.__ModuleLoader__.load({
         if (state) setEngine(state)
         if (state && !state.ok) return
         try {
-          const [h, m, r, a, p, d] = await Promise.all([api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'), api('/dsh/models').catch(() => ({ dsh: null }))])
+          const [h, m, r, a, p, d, t, c] = await Promise.all([
+            api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'),
+            api('/dsh/models').catch(() => ({ dsh: null })),
+            api('/text/models').catch(() => ({ models: [] })),
+            api('/capabilities').catch(() => ({ scheduling: null })),
+          ])
           setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setPersonas(p.personas || []); setDsh(d.dsh || null)
+          setTextModels(t.models || []); setScheduling(c.scheduling || null)
           setSelected(prev => prev ? (r.runs || []).find(x => x.id === prev.id) || prev : null)
         } catch (e) { setErr('加载失败：' + String(e.message || e)) }
       }, [])
@@ -2535,11 +2677,11 @@ window.__ModuleLoader__.load({
               : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
             h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, onStarted: started, personas, onRefreshPersonas: refresh })),
-            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, onStarted: started, onRefreshAssets: refresh })),
+            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, textModels, onStarted: started, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,
-            !selected && tab === 'settings' ? h(SettingsTab, { health, models, assets, onRefresh: refresh, engine, onSetup: () => setForceSetup(true) }) : null,
+            !selected && tab === 'settings' ? h(SettingsTab, { health, models, assets, textModels, scheduling, onRefresh: refresh, engine, onSetup: () => setForceSetup(true) }) : null,
           )
         )
       )

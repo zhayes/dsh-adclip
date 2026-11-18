@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import capabilities
 from . import catalog as model_catalog
 from . import image_params, intents, llm, params, personas, remake_planner, settings, store
-from .providers import discovery
+from .providers import ark_text, discovery
 from .media import ffmpeg
 from .media import stitch as stitch_mod
 from .media import subtitles
@@ -48,7 +48,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 
 
 def _media_type(path: Path) -> str:
@@ -188,7 +188,58 @@ def discover_models() -> dict[str, Any]:
 
 @app.get("/capabilities")
 def get_capabilities() -> dict[str, Any]:
-    return capabilities.manifest(model_catalog.rows())
+    return capabilities.manifest(
+        model_catalog.rows(),
+        text_models=model_catalog.text_rows(),
+        vision_chain=model_catalog.vision_chain(),
+    )
+
+
+@app.get("/text/models")
+def get_text_models() -> dict[str, Any]:
+    """Doubao-Seed-2.1 text/vision rows for the picker and Settings."""
+    rows = model_catalog.text_rows()
+    return {
+        "available": ark_text.available(),
+        "key_present": ark_text.available(),
+        "endpoint": ark_text.BASE + "/chat/completions",
+        "models": rows,
+    }
+
+
+@app.post("/text/models/probe")
+def probe_text_models(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Cheap activation check (1 token, thinking off) for the Ark rows."""
+    ids = payload.get("ids") if isinstance(payload.get("ids"), list) else None
+    results = ark_text.probe([str(item) for item in ids] if ids else None)
+    return {"results": results, "models": model_catalog.text_rows()}
+
+
+@app.post("/text/chat")
+def text_chat(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Free-create chat through Ark. Only the ``ark`` provider is served here."""
+    provider = str(payload.get("provider") or "").strip()
+    model = str(payload.get("model") or "").strip()
+    if provider != "ark" or not model:
+        raise HTTPException(status_code=400, detail="provider=ark and model are required; use /dsh/chat for DSH models")
+    system = str(payload.get("system") or "")
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="messages are required")
+    try:
+        result = ark_text.chat(
+            system,
+            [{"role": str(item.get("role") or "user"), "content": item.get("content")}
+             for item in messages if isinstance(item, dict)],
+            model=model,
+            max_tokens=int(payload.get("maxTokens") or 1200),
+            temperature=float(payload.get("temperature") or 0.4),
+            thinking=payload.get("thinking") if isinstance(payload.get("thinking"), bool) else False,
+            timeout=float(payload.get("timeout") or 90.0),
+        )
+    except ark_text.ArkTextError as exc:
+        return JSONResponse(status_code=502, content={"error": {"code": "ark_text_failed", "kind": exc.kind, "message": str(exc)}})
+    return JSONResponse(content={"text": result["text"], "provider": "ark", "model": result["model"], "usage": result.get("usage") or {}})
 
 
 @app.get("/settings/model_params")

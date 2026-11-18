@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from . import capabilities, settings
+from .providers import ark_text
 
 VIDEO_CAPABILITIES = ("text_to_video", "image_to_video", "reference_to_video")
 IMAGE_CAPABILITIES = ("text_to_image", "image_to_image")
@@ -343,3 +344,63 @@ def default_model(kind: str, capability: str = "") -> str:
             continue
         return row["id"]
     return ""
+
+
+# Text/vision rows deliberately live outside VIDEO_ROWS/IMAGE_ROWS: the
+# generation registry and its tests assume every row has io/params/remake.
+def text_rows() -> list[dict[str, Any]]:
+    """Doubao-Seed-2.1 text/vision rows (never part of rows())."""
+    return ark_text.models()
+
+
+def _dsh_vision_ready() -> bool:
+    url = (os.environ.get("ADSTUDIO_DSH_VISION_URL") or "").strip()
+    if url:
+        return True
+    chat = (os.environ.get("ADSTUDIO_DSH_CHAT_URL") or "").strip()
+    return bool(chat and chat.endswith("/chat"))
+
+
+def vision_chain() -> list[dict[str, Any]]:
+    """The fallback ladder the engine and DSH tools report.
+
+    MiniMax stays first; Doubao is tried next in the configured order, then the
+    Host vision bridge, then heuristic analysis (always available, no model).
+    """
+    minimax_key = bool(os.environ.get("MINIMAX_API_KEY", "").strip())
+    chain: list[dict[str, Any]] = [{
+        "id": "minimax.m3",
+        "label": "MiniMax-M3",
+        "provider": "minimax",
+        "role": "vision",
+        "available": minimax_key,
+        "reason": "" if minimax_key else "未配置 MINIMAX_API_KEY",
+    }]
+    for row in text_rows():
+        chain.append({
+            "id": row["id"],
+            "label": row["label"],
+            "provider": "ark",
+            "role": "vision",
+            "available": bool(row.get("available")),
+            "reason": ("" if row.get("available") else (row.get("reason") or "未开通")),
+            "status": row.get("status") or "",
+        })
+    dsh_ready = _dsh_vision_ready()
+    chain.append({
+        "id": "dsh.vision",
+        "label": "DSH 视觉桥",
+        "provider": "dsh",
+        "role": "vision",
+        "available": dsh_ready,
+        "reason": "" if dsh_ready else "DSH 视觉桥未接入",
+    })
+    chain.append({
+        "id": "heuristic",
+        "label": "启发式拆解",
+        "provider": "local",
+        "role": "vision",
+        "available": True,
+        "reason": "",
+    })
+    return chain

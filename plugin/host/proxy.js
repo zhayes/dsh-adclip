@@ -143,6 +143,20 @@ export function registerProxy(ctx, supervisor, dsh) {
       }
       return
     }
+    if (url.pathname === '/adplus/api/dsh/vision' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req) || '{}')
+        if (!Array.isArray(body.frames) || body.frames.length === 0 || body.frames.length > 12) {
+          writeJson(res, 422, { error: { code: 'bad_frames', message: 'frames must contain 1–12 keyframes' } })
+          return
+        }
+        const result = await dsh.vision(body)
+        writeJson(res, 200, { dsh: result })
+      } catch (error) {
+        writeJson(res, 500, { error: { code: 'dsh_vision_failed', message: String(error?.message || error) } })
+      }
+      return
+    }
     let targetPath = url.pathname
     if (targetPath.startsWith('/adplus/media')) {
       targetPath = '/media'

@@ -372,8 +372,18 @@ def default_params(model_id: str) -> dict[str, Any]:
     return copy.deepcopy(spec(model_id).get("default_params") or {})
 
 
-def manifest(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Machine-readable capability manifest for Settings and DSH tools."""
+def manifest(
+    rows: list[dict[str, Any]],
+    *,
+    text_models: list[dict[str, Any]] | None = None,
+    vision_chain: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Machine-readable capability manifest for Settings and DSH tools.
+
+    ``text_models`` and ``vision_chain`` carry the Ark Doubao text/vision rows
+    and the ordered reference-frame fallback ladder; they stay out of
+    ``models`` so the video/image registry keeps its shape.
+    """
     models = []
     for row in rows:
         models.append({
@@ -392,4 +402,30 @@ def manifest(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "quality": row.get("quality") or {},
             "default_params": row.get("default_params") or {},
         })
-    return {"version": 1, "models": models}
+    payload: dict[str, Any] = {"version": 1, "models": models}
+    if text_models is not None:
+        payload["text_models"] = [{
+            "id": row.get("id"),
+            "label": row.get("label"),
+            "provider": row.get("provider"),
+            "kind": row.get("kind") or "text",
+            "ark_model": row.get("ark_model") or "",
+            "tags": row.get("tags") or [],
+            "capabilities": row.get("capabilities") or [],
+            "context": row.get("context") or "",
+            "endpoint": row.get("endpoint") or "",
+            "available": bool(row.get("available")),
+            "status": row.get("status") or "",
+            "reason": row.get("reason") or "",
+            "checked_at": row.get("checked_at") or "",
+        } for row in text_models]
+    if vision_chain is not None:
+        payload["scheduling"] = {"vision": [{
+            "id": row.get("id"),
+            "label": row.get("label"),
+            "provider": row.get("provider"),
+            "available": bool(row.get("available")),
+            "reason": row.get("reason") or "",
+            "status": row.get("status") or "",
+        } for row in vision_chain]}
+    return payload
