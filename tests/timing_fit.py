@@ -25,16 +25,17 @@ def check_fit_lines() -> None:
     assert kept == ["一二三四", "五六七八"], kept
     assert trimmed is False
     # 30 chars in 3 seconds is 10 cps: even the fastest read cannot finish it,
-    # so the single line is cut to the budget instead of running past the cut.
+    # so the single line is cut to the natural-read budget instead of running
+    # past the cut.
     kept, trimmed = timing.fit_lines(["一" * 30], 3.0)
-    assert len(kept) == 1 and len(kept[0]) == timing.char_budget(3.0, timing.MAX_CPS), kept
+    assert len(kept) == 1 and len(kept[0]) == timing.char_budget(3.0), kept
     assert trimmed is True
     # Several lines are shortened in place, never dropped: a missing punchline
     # or price is worse than a shorter one.
     kept, trimmed = timing.fit_lines(["一二三四五六七八九十", "十一十二"], 2.0)
     assert len(kept) == 2, kept
     assert trimmed is True
-    assert sum(len(line) for line in kept) <= timing.char_budget(2.0, timing.MAX_CPS), kept
+    assert sum(len(line) for line in kept) <= timing.char_budget(2.0), kept
     # A line that fits at a normal pace is left untouched.
     kept, trimmed = timing.fit_lines(["价格搞错了，只要七十多"], 4.0)
     assert kept == ["价格搞错了，只要七十多"] and trimmed is False, kept

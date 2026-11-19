@@ -50,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.14"
+VERSION = "0.1.15"
 
 
 def _media_type(path: Path) -> str:
@@ -716,13 +716,11 @@ def _post_derive(parent: Run, changes: list[dict[str, Any]]) -> Run:
         trim_end=advanced.get("trim_end"),
     )
     notes = []
-    if any(str((c.get("field") or "")).startswith("post.subtitle") for c in changes):
+    if any(str(c.get("field") or "").startswith("post.subtitle") for c in changes):
         if str(advanced.get("subtitle") or "off") == "sidecar":
             notes.append("字幕已改为 SRT 旁挂文件（画面不烧录）")
         else:
             notes.append("字幕已关闭，本次不生成 SRT")
-    if any(str((c.get("field") or "")).startswith("post.music") for c in changes):
-        notes.append("音乐替换尚未接入；本次未改动音轨")
     run = Run(
         id=run_id,
         scenario=parent.scenario,

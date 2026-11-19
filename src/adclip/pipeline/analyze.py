@@ -434,7 +434,10 @@ def analyze(run_id: str) -> dict[str, Any]:
     cache_key = ""
     if ref_id:
         cache_key = analysis_cache.key(
-            str(ref_id), asr_available=asr.available(), vision_available=vision.available()
+            str(ref_id),
+            asr_available=asr.available(),
+            vision_available=vision.available(),
+            vision=vision.chain_signature(),
         )
         cached = analysis_cache.load(cache_key)
         if cached:

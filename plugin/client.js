@@ -1418,7 +1418,7 @@ window.__ModuleLoader__.load({
         analysis && analysis.available ? h('section', { className: 'adp-inputs' },
           h('div', { className: 'adp-inputs-head' },
             h('div', { className: 'adp-h2' }, '参考片拆解'),
-            h('span', { className: 'adp-storyboard-meta' }, (analysis.analysis && analysis.analysis.mode === 'frames' ? '视频帧分析' : '启发式拆解') + ((analysis.analysis && analysis.analysis.model) ? ' · ' + analysis.analysis.model : '') + ((analysis.analysis && analysis.analysis.degraded) ? ' · 降级' : ''))
+            h('span', { className: 'adp-storyboard-meta' }, (analysis.analysis && analysis.analysis.mode === 'frames' ? '视频帧分析' : '启发式拆解') + ((analysis.analysis && analysis.analysis.model) ? ' · ' + analysis.analysis.model : '') + ((analysis.analysis && analysis.analysis.cached) ? ' · 缓存结果' : '') + ((analysis.analysis && analysis.analysis.degraded) ? ' · 降级' : ''))
           ),
           h('div', { className: 'adp-col', style: { padding: '0 14px 14px', gap: 8 } },
             ((analysis.remake_plan || {}).shots || []).map((shot) => h('div', { key: shot.id, className: 'adp-shot', style: { padding: '9px 10px' } },

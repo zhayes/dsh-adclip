@@ -13,10 +13,11 @@ from __future__ import annotations
 
 DEFAULT_CPS = 4.0
 MAX_CPS = 5.5
-GRACE = 1.2
+GRACE = 1.15
+SINGLE_GRACE = 1.5
 MIN_LINE_S = 0.7
 LINE_GAP_S = 0.2
-TAIL_S = 0.25
+TAIL_S = 0.45
 MIN_LINE_CHARS = 4
 _PUNCT = "，。！？、；：,.!?;:"
 
@@ -43,24 +44,30 @@ def _cut(text: str, limit: int) -> str:
     return head.rstrip(_PUNCT + " 　")
 
 
-def fit_lines(lines: list[str], seconds: float, *, cps: float = MAX_CPS) -> tuple[list[str], bool]:
+def fit_lines(lines: list[str], seconds: float, *, cps: float = DEFAULT_CPS) -> tuple[list[str], bool]:
     """Shorten a beat's lines so every one can be spoken inside `seconds`.
 
     Returns `(kept_lines, trimmed)`. Lines are never dropped: each gets a share
     of the budget proportional to its own length, so the price line and the
     punchline survive instead of quietly disappearing from the prompt.
+
+    The budget is the natural read (4 chars/s), not the physical maximum: a
+    model that is told to speak at 5.5 chars/s lags and clips the last line.
     """
     texts = [str(line or "").strip() for line in lines if str(line or "").strip()]
     if not texts:
         return [], False
     budget = char_budget(seconds, cps)
     total = sum(len(text) for text in texts)
-    # A line a hair over budget still reads better whole: the speaker only has
-    # to push the pace slightly. Only a clearly impossible line is cut.
+    if len(texts) == 1:
+        # A lone line is all the operator has here; only cut a clearly
+        # impossible one (10 chars/s territory).
+        if total <= budget * SINGLE_GRACE:
+            return texts, False
+        return [_cut(texts[0], budget)], True
+    # A hair over is fine: the speaker pushes the pace slightly.
     if total <= budget * GRACE:
         return texts, False
-    if len(texts) == 1:
-        return [_cut(texts[0], budget)], True
     shares = [max(MIN_LINE_CHARS, int(budget * len(text) / total)) for text in texts]
     while sum(shares) > budget:
         index = max(range(len(shares)), key=lambda i: shares[i])

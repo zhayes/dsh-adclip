@@ -82,19 +82,13 @@ DEFAULT_ADVANCED = {
     "aspect": "9:16",
     "resolution": "720p",
     "model": "auto",
-    "fidelity": "balanced",
-    "language": "zh",
-    "native_audio": True,
     "remake_mode": "auto",
     "replace_scope": "both",
     "person_scope": "main",
     "audio_mode": "regenerate",
     "subtitle": "off",
-    "subtitle_size": 32,
-    "music": "off",
     "export_bitrate": "8M",
     "fps": 30,
-    "aigc_label": True,
 }
 
 

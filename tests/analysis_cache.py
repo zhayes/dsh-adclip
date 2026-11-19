@@ -94,6 +94,28 @@ def check_asr_invalidates(asset_id: str) -> None:
         analyze.asr = original
 
 
+def check_vision_signature_invalidates(asset_id: str) -> None:
+    """Switching a vision provider off must not replay its cached analysis."""
+    from adclip import settings
+    from adclip.providers import ark_text
+
+    sig_all = vision.chain_signature()
+    assert "ark:" in sig_all, sig_all
+    settings.set_enabled_text_models([])
+    try:
+        sig_none = vision.chain_signature()
+        assert "ark:" not in sig_none, sig_none
+        on = analysis_cache.key(asset_id, asr_available=False, vision_available=True, vision=sig_all)
+        off = analysis_cache.key(asset_id, asr_available=False, vision_available=True, vision=sig_none)
+        assert on != off, (on, off)
+    finally:
+        settings.set_enabled_text_models([str(row["id"]) for row in ark_text.ROWS])
+        try:
+            settings.MODEL_PREFS.unlink()
+        except OSError:
+            pass
+
+
 def check_vision_order() -> None:
     from adclip.providers import ark_text
 
@@ -114,6 +136,7 @@ def main() -> None:
     asset_id = _asset()
     check_cache_roundtrip(asset_id)
     check_asr_invalidates(asset_id)
+    check_vision_signature_invalidates(asset_id)
     check_vision_order()
     print("adclip analysis cache: ok")
 

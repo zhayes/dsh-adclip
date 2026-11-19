@@ -1,5 +1,21 @@
 # Progress / handoff
 
+## 拆解继承 / 缓存签名 / 参数清理
+
+- `render_generation` 现在按镜头输出：每个镜头一块，带自己的景别·运镜·角度、场景、动作、
+  构图、衔接、转场和台词时间。之前把所有镜头压成一句 `【场景】/【动作】/【镜头】`，
+  两镜换场景（卧室 → 家纺店内）时提示词会丢掉第二镜的信息。人物的书面描述只在
+  “保留人物”时才列出，替换人物时改为要求人数/站位一致。
+- 分析缓存 key 增加视觉链签名 `vision.chain_signature()`（`minimax` / `ark:lite,turbo,pro`
+  / `dsh` 的组合）。停用某个提供方后 key 变了，不会再重放它产出的旧拆解——之前
+  “已停用 Doubao 但界面还显示 doubao 模型”就是命中了旧缓存（`analysis.cached`）。
+  拆解面板现在也会标「缓存结果」。`CACHE_VERSION` → `5`。
+- 台词时长：`fit_lines` 的预算回到自然语速 4 字/秒（单句放宽 1.5 倍、多句 1.15 倍），
+  渲染前再按 5.5 字/秒的物理上限兜一次；`TAIL_S` 0.25 → 0.45，最后一句离切点更远。
+- 删掉了从未被读取的 `advanced` 字段：`fidelity`、`language`、`native_audio`、`music`、
+  `aigc_label`，以及 `subtitle_size`；对应的“字幕字号”“背景音乐”意图规则一并移除
+  （本地 ffmpeg 没有 libass/drawtext，这些字段只会伪造一个已改的假象）。
+
 ## 文本 / 视觉模型的启用开关
 
 - 「已开通」是方舟侧的开关，「启用」是 AdClip 自己的开关：`POST /settings/text_models`

@@ -138,7 +138,9 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
         changes.append(_change("persona.ethnicity", persona.get("ethnicity"), ethnicity, "generate", "模特族裔"))
         persona["ethnicity"] = ethnicity
 
-    # post-only: subtitle delivery is a switch, so judge on/off before the size words
+    # post-only: subtitle delivery is a switch (SRT sidecar or nothing).
+    # Size/music/burn-in controls are gone: the local ffmpeg has neither libass
+    # nor drawtext, so those fields could only ever claim a change.
     subtitle_toggled = False
     current_subtitle = str(advanced.get("subtitle") or "off")
     if re.search(r"字幕", text) and re.search(r"关闭|关掉|不要|不用|去掉|取消|不启用|别加|无字幕", text):
@@ -151,17 +153,6 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
         if current_subtitle != "sidecar":
             changes.append(_change("post.subtitle", current_subtitle, "sidecar", "post", "字幕"))
             advanced["subtitle"] = "sidecar"
-    if not subtitle_toggled and re.search(r"字幕", text) and re.search(r"大|放大", text):
-        size = int(post.get("subtitle_size") or 32) + 4
-        changes.append(_change("post.subtitle_size", post.get("subtitle_size"), size, "post", "字幕字号"))
-        post["subtitle_size"] = size
-    if not subtitle_toggled and re.search(r"字幕", text) and re.search(r"小", text):
-        size = max(16, int(post.get("subtitle_size") or 32) - 4)
-        changes.append(_change("post.subtitle_size", post.get("subtitle_size"), size, "post", "字幕字号"))
-        post["subtitle_size"] = size
-    if re.search(r"轻音乐|背景音乐|音乐", text):
-        changes.append(_change("post.music", post.get("music", "off"), "light", "post", "音乐"))
-        post["music"] = "light"
     if re.search(r"文件.*(小|太大)|码率|体积", text):
         changes.append(_change("post.export_bitrate", post.get("export_bitrate", "8M"), "4M", "post", "导出码率"))
         post["export_bitrate"] = "4M"

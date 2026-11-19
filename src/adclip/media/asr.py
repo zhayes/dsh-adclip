@@ -331,7 +331,11 @@ def refine(
             for row, value in zip(rows, lines):
                 fixed = str(value or "").strip()
                 out.append({**row, "text": fixed or str(row.get("text") or "")})
-            LAST_NOTE = (LAST_NOTE + "；" if LAST_NOTE else "") + f"已用{label}校正同音字"
+            # Keep the transcribe note (e.g. the VAD retry) but never duplicate
+            # the cleanup sentence when refine runs more than once.
+            piece = f"已用{label}校正同音字"
+            kept = [part for part in str(LAST_NOTE or "").split("；") if part and "校正同音字" not in part]
+            LAST_NOTE = "；".join(kept + [piece])
             return out
         LAST_ERROR = ("cleanup: " + (" | ".join(errors) or "skipped"))[:200]
         return rows

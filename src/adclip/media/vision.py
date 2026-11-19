@@ -76,6 +76,23 @@ def available() -> bool:
     )
 
 
+def chain_signature() -> str:
+    """Which vision providers can run, in ladder order.
+
+    Part of the analysis cache key: switching a provider off must not replay a
+    cached result that provider produced.
+    """
+    parts: list[str] = []
+    if os.environ.get("MINIMAX_API_KEY", "").strip():
+        parts.append("minimax")
+    arks = [str(row.get("short") or row.get("id") or "") for row in ark_text.vision_models()]
+    if arks:
+        parts.append("ark:" + ",".join(arks))
+    if DSH_VISION_URL:
+        parts.append("dsh")
+    return "+".join(parts) if parts else "none"
+
+
 def _strip(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
 

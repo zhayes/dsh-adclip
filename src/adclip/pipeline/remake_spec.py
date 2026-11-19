@@ -39,6 +39,10 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
     lines = [str(text).strip() for text in shot.get("lines") or [] if str(text).strip()]
     if not lines:
         return []
+    span = float(shot.get("end_s") or 0) - float(shot.get("start_s") or 0)
+    # Last guard before the prompt: a line that no human could say inside the
+    # shot is shortened here, so the model is never asked for the impossible.
+    lines, _ = timing.fit_lines(lines, span, cps=timing.MAX_CPS)
     rows = shot.get("dialogue_rows") or []
     if len(rows) == len(lines):
         aligned = [
@@ -124,23 +128,78 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
     }
 
 
+def _camera_label(shot: dict[str, Any]) -> str:
+    return " · ".join(
+        value for value in (
+            str(shot.get("shot_size") or ""),
+            str(shot.get("camera_movement") or ""),
+            str(shot.get("camera_angle") or ""),
+        ) if value
+    )
+
+
+def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool) -> list[str]:
+    """One shot as the breakdown described it: camera, scene, action, framing.
+
+    The analysis is the only grounded description of the reference, so it is
+    carried shot by shot instead of being averaged into one global line: a
+    two-shot reference often changes scene, lens and framing between cuts.
+    """
+    span = f"{float(shot.get('start_s') or 0):.1f}–{float(shot.get('end_s') or 0):.1f}s"
+    camera = _camera_label(shot)
+    lines = [f"【镜头{index + 1}】{span}" + ("｜" + camera if camera else "")]
+    if shot.get("scene"):
+        lines.append("场景：" + str(shot["scene"]))
+    action = str(shot.get("reference_action") or shot.get("action") or "").strip()
+    if action:
+        lines.append("动作：" + action)
+    if shot.get("composition"):
+        lines.append("构图：" + str(shot["composition"]))
+    if shot.get("continuity") and str(shot["continuity"]) not in {"不确定", "unknown"}:
+        lines.append("衔接：" + str(shot["continuity"]))
+    if index > 0 and str(shot.get("transition_in") or "cut") == "cut":
+        lines.append("转场：从上个镜头硬切")
+    cast = [str(item.get("description") or "").strip() for item in shot.get("cast") or [] if str(item.get("description") or "").strip()]
+    if cast and not persona and not people_replaced:
+        lines.append("人物：" + "、".join(dict.fromkeys(cast[:3])))
+    for row in shot.get("timed_lines") or []:
+        lines.append(
+            f"台词 [{float(row['start_s']):.1f}–{float(row['end_s']):.1f}s] {row['text']}"
+        )
+    return lines
+
+
 def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool = False) -> str:
-    """Full description for a model that cannot see the reference video."""
+    """Full description for a model that cannot see the reference video.
+
+    The layout mirrors the breakdown: every shot keeps its own lens, scene,
+    action and framing, because that is where the reference drift shows up.
+    """
     shots = spec.get("shots") or []
     source = spec.get("source") or {}
     req = spec.get("requirements") or {}
     audio = spec.get("audio") or {}
+    preserve = list((spec.get("global") or {}).get("preserve") or [])
+    replace = list((spec.get("global") or {}).get("replace") or [])
+    # The spoken audio is rewritten in `regenerate`, so claiming to preserve it
+    # in the same sentence would contradict the dialogue block.
+    if (spec.get("audio") or {}).get("mode") == "regenerate":
+        preserve = [value for value in preserve if value != "原声"]
     duration = float(source.get("duration_s") or 0)
     orientation_label = orientation(str(source.get("aspect") or "9:16"))
     if len(shots) <= 1:
         shot_phrase = "一次连续拍摄，中间不切换镜头"
     else:
-        shot_phrase = "按镜头顺序拍摄，镜头之间硬切，无转场特效（切点位置为近似）"
+        shot_phrase = f"{len(shots)} 个镜头按顺序拍摄，镜头之间硬切，无转场特效（切点位置为近似）"
     head = [
         f"任务：{orientation_label}短视频，约 {duration:.1f} 秒，{shot_phrase}。" if duration
         else f"任务：{orientation_label}短视频，{shot_phrase}。",
-        "【优先级】替换对象 > 台词 > 动作 > 风格，冲突时以前者为准。",
     ]
+    if replace:
+        head.append(
+            f"【替换】只替换：{'、'.join(replace)}；"
+            f"{'、'.join(preserve) if preserve else '镜头、场景、动作、构图、节奏、转场'} 与参考片一致。"
+        )
     materials: list[str] = []
     if anchor:
         materials.append("图片1=参考片首帧，第 1 帧必须与图片一致，后续动作从该帧自然延续")
@@ -151,14 +210,12 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if materials:
         head.append("【素材】" + "；".join(materials) + "。")
 
-    scene = next((shot["scene"] for shot in shots if shot.get("scene")), "")
-    if scene:
-        head.append(f"【场景】{scene}。")
-
     persona = str((spec.get("global") or {}).get("persona") or "").strip()
     cast = [item.get("description") for shot in shots for item in shot.get("cast") or [] if item.get("description")]
     if persona:
-        head.append(f"【人物】{persona}，面向镜头自然交流。")
+        head.append(f"【人物】{persona}，面向镜头自然交流；人数、站位与参考片一致。")
+    elif "人物" in replace:
+        head.append("【人物】人物全部替换，人数、站位、动作与参考片一致；不要新增或删除人物。")
     elif cast:
         head.append("【人物】" + "、".join(dict.fromkeys(cast[:3])) + "。")
 
@@ -166,26 +223,18 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if product_hint:
         head.append(f"【商品】{product_hint}，包装与图片一致，手持展示、标签清晰。")
 
-    actions = []
-    for shot in shots:
-        action = str(shot.get("action") or "").strip()
-        if not action:
-            continue
-        actions.append(f"{float(shot['start_s']):.1f}–{float(shot['end_s']):.1f}s {action}")
-    if actions:
-        head.append("【动作】" + "；".join(actions) + "。")
+    for index, shot in enumerate(shots):
+        head.extend(_shot_block(shot, index, persona=persona, people_replaced="人物" in replace))
 
-    dialogue: list[str] = []
-    for shot in shots:
-        for row in shot.get("timed_lines") or []:
-            dialogue.append(f"[{float(row['start_s']):.1f}–{float(row['end_s']):.1f}s] {row['text']}")
+    dialogue = [
+        row for shot in shots for row in (shot.get("timed_lines") or [])
+    ]
     if dialogue:
         head.append(
-            f"【台词】共 {len(dialogue)} 句，必须逐句完整念完，不得省略、合并或改写；"
+            f"【台词要求】共 {len(dialogue)} 句，必须逐句完整念完，不得省略、合并或改写；"
             "标准普通话，同一时间只有一个人说话；每句说完停 0.2–0.5 秒。"
         )
-        head.extend(dialogue)
-        head.append("【语速】按每秒 4–5 个字念，严格贴着上面每句的起止时间；句子还没念完不要切走。")
+        head.append("【语速】按每秒 4–5 个字念，严格贴着每句标注的起止时间；句子还没念完不要切走。")
         prices = [str(value) for value in req.get("prices") or []]
         if prices:
             head.append("必须清楚说出价格：" + "、".join(prices) + "。")
@@ -193,20 +242,6 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
             head.append(f"全部台词必须在约 {max(0.5, duration - 0.3):.1f} 秒前说完；说完后不要留长时间空白画面。")
     if audio.get("no_bgm"):
         head.append("【音频】无背景音乐；只有人物同期声；环境音可选且音量低于人声。")
-
-    camera = next(
-        (
-            "，".join(value for value in (
-                str(shot.get("shot_size") or ""),
-                str(shot.get("camera_movement") or ""),
-                str(shot.get("camera_angle") or ""),
-            ) if value)
-            for shot in shots
-        ),
-        "",
-    )
-    if camera:
-        head.append(f"【镜头】{camera}。")
 
     # Watermarks are controlled by the provider parameter (`watermark: false`),
     # not by prompt text: naming them can leak the word into the picture, so the

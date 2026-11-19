@@ -11,18 +11,24 @@ of silently reusing it.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from . import store
 
-CACHE_VERSION = "4"
+CACHE_VERSION = "5"
 CACHE_DIR = store.DATA / "analysis_cache"
 
 
-def key(asset_id: str, *, asr_available: bool, vision_available: bool) -> str:
+def key(asset_id: str, *, asr_available: bool, vision_available: bool, vision: str = "") -> str:
     record = store.get_asset(asset_id) or {}
     digest = str(record.get("sha256") or "")[:24] or str(record.get("id") or asset_id)
-    return f"{digest}_{CACHE_VERSION}_{int(bool(asr_available))}{int(bool(vision_available))}"
+    # `vision` is the provider signature (which ladder rungs are usable). Without
+    # it, disabling a provider would replay an entry that provider produced and
+    # the UI would keep showing a model the operator switched off.
+    tag = hashlib.sha256(vision.encode("utf-8")).hexdigest()[:6] if vision else ""
+    suffix = f"_{tag}" if tag else ""
+    return f"{digest}_{CACHE_VERSION}_{int(bool(asr_available))}{int(bool(vision_available))}{suffix}"
 
 
 def load(cache_key: str) -> dict[str, Any] | None:
