@@ -124,17 +124,22 @@ def check_generation_prompt() -> None:
     assert "一次连续拍摄" in text, text
     assert "广告大字报" in text, text
     # The prompt reads like a hand-written one: per-shot header, one flowing
-    # visual paragraph, and a timestamped dialogue list. Pace arithmetic was
-    # removed — the model paces itself from the timestamps.
+    # visual paragraph, and a timestamped dialogue list. Pace arithmetic stays
+    # out (the model paces itself from the timestamps), but the reference's
+    # delivery is stated: without it the lines read complete but flat.
     assert "【镜头 1｜" in text, text
     assert "画面：" in text, text
     assert "台词（必须与画面动作、口型同步）：" in text, text
     assert "[00:00.40–" in text, text
     assert "【台词】共" in text, text
+    assert "【语感】" in text, text
+    assert "【节奏】" in text, text
+    assert "播报腔" in text, text
+    assert "每秒" in text, text
     assert "不得漏句" in text, text
     assert "水印" not in text, "watermark suppression belongs to the provider parameter, not the prompt"
-    assert "语速" not in text, text
     assert "秒前说完" not in text, text
+    assert "每句间隔" not in text, text
     assert len(text) <= 3500, len(text)
 
     wide = remake_spec.render_generation(remake_spec.build_spec(_run(aspect="16:9"), _skeleton("16:9"), _script()))
@@ -183,8 +188,12 @@ def check_delivery() -> None:
     skeleton["remake_plan"]["shots"][0]["expression"] = "夸张瞪眼、得意"
     skeleton["remake_plan"]["shots"][0]["tone"] = "夸张叫卖"
     skeleton["remake_plan"]["shots"][0]["pace_cps"] = 6.0
+    skeleton["remake_plan"]["pace_cps"] = 6.0
     text = remake_spec.render_generation(remake_spec.build_spec(_run(), skeleton, _script()))
     assert "表演：夸张瞪眼、得意；夸张叫卖。" in text, text
+    assert "参考片语速约每秒 6.0 个字，偏快" in text, text
+    # No pace arithmetic: the timestamps already carry the windows.
+    assert "秒前说完" not in text, text
 
 
 def check_reference_prompt() -> None:

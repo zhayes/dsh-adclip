@@ -319,8 +319,24 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if dialogue:
         # Keep this short. The working hand-written prompts state nothing but
         # the timestamped lines; the model paces itself from them. Pace math in
-        # the prompt only gave it something to contradict.
+        # the prompt only gave it something to contradict. Delivery is the
+        # exception: without it the remake reads the lines correctly but flatly,
+        # which is the one thing a reference clip always gets right.
         head.append(f"【台词】共 {len(dialogue)} 句，按上面的时间与顺序说完，不要省略、合并或提前收尾。")
+        pace = (spec.get("global") or {}).get("pace_cps")
+        label = timing.pace_label(pace)
+        pace_text = (
+            f"参考片语速约每秒 {float(pace):.1f} 个字，{label}" if pace and label
+            else (f"参考片语速约每秒 {float(pace):.1f} 个字" if pace else "语速紧凑，跟参考片一样")
+        )
+        head.append(
+            f"【语感】{pace_text}；像原片里的真人导购对镜头说话，有起伏、有重音，"
+            "价格和数字读清楚，句尾收得住；不要平铺直叙，不要播报腔。"
+        )
+        head.append(
+            "【节奏】整条一气说完，句间只做自然换气，不要多出参考片没有的空白；"
+            "镜头切点不要停顿，上一句说完直接接下一句。"
+        )
         prices = [str(value) for value in req.get("prices") or []]
         if prices:
             head.append("必须清楚说出价格：" + "、".join(prices) + "。")
