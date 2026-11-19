@@ -32,38 +32,41 @@ def orientation(aspect: str) -> str:
 def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
     """New dialogue lines mapped onto time slots.
 
-    When the ASR rows and the script lines line up they share their real
-    timings; otherwise the lines are spread evenly across the shot, which is
-    honest about not knowing where each sentence lands.
+    The reference's own ASR windows are the ground truth for rhythm: if the
+    rewrite has one line per reference line, each line keeps the original
+    start/end and is shortened to what that window holds. That copies the
+    original speaker's pauses instead of spreading the text evenly, which used
+    to squeeze the last line into a slot it could not finish.
     """
     lines = [str(text).strip() for text in shot.get("lines") or [] if str(text).strip()]
     if not lines:
         return []
-    span = float(shot.get("end_s") or 0) - float(shot.get("start_s") or 0)
+    start_s = float(shot.get("start_s") or 0)
     end_s = float(shot.get("end_s") or 0)
-    # Last guard before the prompt: a line that no human could say inside the
-    # shot is shortened here, so the model is never asked for the impossible.
-    lines, _ = timing.fit_lines(lines, timing.speak_span(span), cps=timing.MAX_CPS)
     rows = shot.get("dialogue_rows") or []
-    if len(rows) == len(lines):
-        aligned = [
-            {
-                "start_s": round(float(row.get("start_s") or 0), 2),
-                "end_s": round(float(row.get("end_s") or 0), 2),
-                "text": line,
-            }
-            for line, row in zip(lines, rows)
-        ]
-        # Real ASR timings are only reused when the line still ends before the
-        # cut: a line that runs to the last frame gets clipped, and the model
-        # then starts the next shot late, which reads as a long pause.
-        if all(
-            item["end_s"] - item["start_s"] >= timing.speak_seconds(item["text"], timing.MAX_CPS)
-            and item["end_s"] <= end_s - timing.TAIL_S + 1e-6
-            for item in aligned
-        ):
+    if len(rows) == len(lines) and rows:
+        aligned: list[dict[str, Any]] = []
+        for line, row in zip(lines, rows):
+            row_start = max(start_s, float(row.get("start_s") or 0))
+            row_end = min(end_s - timing.TAIL_S, float(row.get("end_s") or 0))
+            if row_end - row_start < 0.4:
+                row_end = min(end_s - timing.TAIL_S, row_start + 0.4)
+            window = max(0.4, row_end - row_start)
+            # Only cut what is physically impossible in this window: the
+            # script prompt already asks for one short line per window.
+            fitted, _ = timing.fit_lines(
+                [line], window, cps=timing.MAX_CPS, grace=1.0, single_grace=1.0
+            )
+            aligned.append({
+                "start_s": round(row_start, 2),
+                "end_s": round(row_end, 2),
+                "text": (fitted or [line])[0],
+            })
+        if all(item["end_s"] > item["start_s"] for item in aligned):
             return aligned
-    return timing.schedule(lines, float(shot.get("start_s") or 0), end_s)
+    # Line count differs from the reference: fall back to an even spread.
+    lines, _ = timing.fit_lines(lines, timing.speak_span(end_s - start_s), cps=timing.BUDGET_CPS, grace=1.0)
+    return timing.schedule(lines, start_s, end_s)
 
 
 def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> dict[str, Any]:
@@ -108,6 +111,7 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
     pace = plan.get("pace_cps")
     if not isinstance(pace, (int, float)) or not pace:
         pace = timing.measured_cps([row for shot in shots for row in shot.get("dialogue_rows") or []])
+    req = requirements.derive(str(inputs.get("brief") or ""), advanced)
     for shot in shots:
         if not shot.get("pace_cps"):
             shot["pace_cps"] = round(float(pace), 2) if pace else None
@@ -129,7 +133,7 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             "persona": persona_mod.persona_instruction(advanced),
             "pace_cps": round(float(pace), 2) if pace else None,
         },
-        "requirements": requirements.derive(str(inputs.get("brief") or ""), advanced),
+        "requirements": req,
         "overrides": str(inputs.get("explicit_overrides") or "").strip(),
         "audio": {
             "mode": str(advanced.get("audio_mode") or "regenerate"),

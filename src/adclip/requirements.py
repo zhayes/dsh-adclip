@@ -16,7 +16,7 @@ _CLEAN_TEXT = re.compile(
 )
 _BGM = re.compile(r"(?:背景音乐|BGM|配乐|音乐)", re.IGNORECASE)
 _BGM_OFF = re.compile(r"(?:不要|去掉|不用|别加|无|取消).{0,4}(?:背景音乐|BGM|配乐|音乐)", re.IGNORECASE)
-_PRICE = re.compile(r"\d+(?:\.\d+)?\s*(?:元|块钱|块\d?|折)")
+_PRICE = re.compile(r"(?:\d+(?:\.\d+)?|[一二三四五六七八九十百千两]+)\s*(?:元|块钱|块\d?|折|多)")
 _PRODUCT = re.compile(r"(?:商品|产品|货)(?:名称|名)?(?:改成|改为|换成|换为|是)[「\"']?([^，。,.\n「」\"']{2,20})")
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{2,40})[」』”\"]")
 

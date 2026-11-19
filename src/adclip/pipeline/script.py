@@ -221,6 +221,21 @@ def _beat_budget(beat: dict[str, Any]) -> tuple[int, float]:
     return timing.char_budget(span, cps), cps
 
 
+def _line_windows(beat: dict[str, Any]) -> str:
+    """The reference's own line windows, as per-line character limits.
+
+    Writing one line per window is what lets the remake keep the original
+    speaker's pauses instead of an even spread.
+    """
+    parts = []
+    for row in beat.get("dialogue_rows") or []:
+        start = float(row.get("start_s") or 0)
+        end = float(row.get("end_s") or 0)
+        span = timing.speak_span(max(0.4, end - start))
+        parts.append(f"{start:.1f}–{end:.1f}s≤{timing.char_budget(span, timing.BUDGET_CPS)}字")
+    return "；".join(parts)
+
+
 def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dict[str, Any]:
     brief = str((run.inputs or {}).get("brief") or "").strip()
     advanced = run.advanced or {}
@@ -232,7 +247,8 @@ def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dic
         f"- {b['id']} {b['start_s']:.1f}-{b['end_s']:.1f}s [{b.get('function')}] "
         f"台词总字数≤{_beat_budget(b)[0]} 字 "
         f"参考语速{_beat_budget(b)[1]:.1f}字/秒 "
-        f"画面：{((b.get('visual') or {}).get('action') or '')[:90]}"
+        + (f"行时窗：{_line_windows(b)} " if _line_windows(b) else "")
+        + f"画面：{((b.get('visual') or {}).get('action') or '')[:90]}"
         for b in beats
     )
     keeps = "\n".join(f"- [{k['beat']}] {k['text']}" for k in gag.get("must_keep") or [])
@@ -253,6 +269,7 @@ def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dic
 写一段可直接交给原生对白视频模型的中文脚本。要求：
 - 只输出 JSON；
 - 每个 beat 给出 1-3 行短台词，每行不超过 18 个汉字，该 beat 所有台词合计不得超过标注的字数上限（上限已经留了镜头切换余量，超出就念不完，最后一句会被切掉）；
+- 如果给了「行时窗」，尽量**每个时窗写一行**（行数与时窗数一致），每行不超过该时窗的字数；这样能沿用原片的停顿节奏；
 - 台词要能连得上参考片的语气：原片快的就写短句、可叫卖式，原片慢的就写得口语、有停顿；不要写成平铺直叙的说明书；
 - 「产品与需求」是给你的制作说明（改什么、保留什么、卖点是什么），不是台词，不要照抄；只有用「」或引号括起来的句子才可以原样念出来；
 - 台词自然、像人说话，由你根据产品信息重新写；
@@ -291,7 +308,11 @@ JSON:
             fallback = _fallback_script(run, skeleton, gag)
             fallback_row = next((r for r in fallback["beats"] if r["id"] == beat["id"]), None)
             lines = fallback_row["lines"] if fallback_row else []
-        kept, trimmed = timing.fit_lines([line["text"] for line in lines], timing.speak_span(beat.get("len_s") or 2), cps=_beat_budget(beat)[1])
+        kept, trimmed = timing.fit_lines(
+            [line["text"] for line in lines],
+            timing.speak_span(beat.get("len_s") or 2),
+            cps=_beat_budget(beat)[1],
+        )
         if trimmed:
             lines = [dict(line, text=text, chars=len(text)) for line, text in zip(lines, kept)]
         rows.append({
@@ -350,7 +371,10 @@ JSON:
     lines = [line for j, line in enumerate(lines) if f"line{j}" not in rejected]
     if not lines:
         raise RuntimeError("模型没有给出可用台词")
-    kept, trimmed = timing.fit_lines([line["text"] for line in lines], timing.speak_span(row.get("len_s") or 2))
+    kept, trimmed = timing.fit_lines(
+        [line["text"] for line in lines],
+        timing.speak_span(row.get("len_s") or 2),
+    )
     if trimmed:
         lines = [dict(line, text=text, chars=len(text)) for line, text in zip(lines, kept)]
     row["lines"] = lines

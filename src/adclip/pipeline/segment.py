@@ -9,7 +9,10 @@ from ..media import ffmpeg
 
 def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], final_s: float) -> list[dict[str, Any]]:
     advanced = params.merged_advanced(run.advanced)
-    target = float(advanced.get("duration") or final_s or 6)
+    # The storyboard describes the clip that was actually produced, so the
+    # probed final duration wins over the requested one. Otherwise the segment
+    # times and the prompt's dialogue times use different timelines.
+    target = float(final_s or advanced.get("duration") or 6)
     source_s = float((skeleton.get("source") or {}).get("duration_s") or target)
     scale = (target / source_s) if source_s > 0 else 1.0
     script_beats = {row.get("id"): row for row in script.get("beats") or []}

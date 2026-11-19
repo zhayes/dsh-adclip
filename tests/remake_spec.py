@@ -35,8 +35,8 @@ def _run(brief: str = "商品改成鱿鱼须，到手49块8，去掉原视频中
 
 def _skeleton(aspect: str = "9:16") -> dict:
     rows = [
-        {"start_s": 0.4, "end_s": 1.8, "text": "家人们刚拉回来一车"},
-        {"start_s": 1.8, "end_s": 3.0, "text": "可折叠贝壳椅"},
+        {"start_s": 0.4, "end_s": 2.2, "text": "家人们刚拉回来一车"},
+        {"start_s": 2.2, "end_s": 5.0, "text": "可折叠贝壳椅"},
     ]
     return {
         "source": {"duration_s": 11.2, "aspect": aspect, "has_audio": True},
@@ -101,8 +101,9 @@ def check_spec() -> None:
     assert len(spec["shots"]) == 1, spec
     shot = spec["shots"][0]
     assert len(shot["timed_lines"]) == 2, shot["timed_lines"]
-    assert shot["timed_lines"][0]["start_s"] == 0.0, shot["timed_lines"]
-    assert shot["timed_lines"][-1]["end_s"] <= 11.2, shot["timed_lines"]
+    # The reference windows are reused, not re-spread from zero.
+    assert shot["timed_lines"][0]["start_s"] == 0.4, shot["timed_lines"]
+    assert [row["end_s"] for row in shot["timed_lines"]] == [2.2, 5.0], shot["timed_lines"]
     assert shot["dialogue_source"] == "asr", shot
     assert spec["requirements"]["clean_text"] is True, spec["requirements"]
     assert spec["constraints"]["product_count"] == 1, spec["constraints"]
@@ -172,6 +173,7 @@ def check_delivery() -> None:
     skeleton = _skeleton()
     skeleton["remake_plan"]["shots"][0]["expression"] = "夸张瞪眼、得意"
     skeleton["remake_plan"]["shots"][0]["tone"] = "夸张叫卖"
+    skeleton["remake_plan"]["shots"][0]["pace_cps"] = 6.0
     text = remake_spec.render_generation(remake_spec.build_spec(_run(), skeleton, _script()))
     assert "表情：夸张瞪眼、得意" in text, text
     assert "语气：夸张叫卖" in text, text
