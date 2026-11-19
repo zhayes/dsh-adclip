@@ -274,7 +274,7 @@ def _rewrite_in_place(
     if not reference:
         return None
     listing = "\n".join(
-        f"- {item['beat']}#{item['index']} [{item['start_s']:.1f}–{item['end_s']:.1f}s] {item['text']}（≤{item['limit']}字）"
+        f"- {item['beat']}#{item['index']} [{item['start_s']:.1f}–{item['end_s']:.1f}s] {item['text']}（原句 {len(item['text'])} 字）"
         for item in reference
     )
     keeps = "\n".join(f"- [{k['beat']}] {k['text']}" for k in gag.get("must_keep") or [])
@@ -299,8 +299,9 @@ def _rewrite_in_place(
 
 请把上面每一句改写成你的版本：
 - 严格一句对一句：行数、顺序、时间窗都不变，不合并、不拆分、不新增句子；
-- 只改用户要求的部分（商品名、价格、卖点、口播细节），句式、钩子结构、语气和收口方式尽量保留；
-- 每句不得超过括号里的字数（这是原片这句的时长能念完的上限，超了模型会说不完、最后一句被切掉）；
+- **只改用户明确要求改的词**（例如商品名、价格、卖点）；用户没提到的句子**原样输出**，
+  一个字都不要改，不要为了字数压缩或改写；
+- 改过的句子也尽量保持原句长度和句式，只做词级替换（比如把“云朵冬被”换成新名字）；
 - 不要照抄用户需求里的制作指令；不要编造未提供的原价、对比价、销量、功效；
 - 价格必须用用户给的数字。
 只输出 JSON，不要解释：
@@ -339,14 +340,14 @@ def _rewrite_in_place(
                 # Never speak the operator's instructions; keep the reference
                 # wording for that slot instead of dropping the line.
                 text = item["text"]
-            kept, _ = timing.fit_lines(
-                [text],
-                max(0.4, item["end_s"] - item["start_s"]),
-                cps=timing.BUDGET_CPS,
-                grace=timing.GRACE,
-                single_grace=timing.GRACE,
-            )
-            text = (kept or [text])[0]
+            # Unchanged lines stay exactly as the reference said them: shortening
+            # them here is what made the remake drift from the original copy.
+            # Only a line the model clearly padded is cut back to the original
+            # length.
+            ceiling = max(len(item["text"]) + 2, int(len(item["text"]) * 1.3))
+            if len(text) > ceiling:
+                kept, _ = timing.fit_lines([text], max(0.4, item["end_s"] - item["start_s"]), cps=timing.MAX_CPS, grace=1.0, single_grace=1.0)
+                text = (kept or [text])[0][:ceiling]
             lines.append({"speaker": "A", "text": text, "chars": len(text)})
         rows.append({
             "id": beat["id"], "function": beat.get("function"), "len_s": beat.get("len_s"),

@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.28` |
-| Python engine (`adclip.api.VERSION`) | `0.1.21` |
+| DSH plugin (`plugin/package.json`) | `0.5.30` |
+| Python engine (`adclip.api.VERSION`) | `0.1.23` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.

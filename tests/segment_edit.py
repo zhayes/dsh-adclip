@@ -36,6 +36,8 @@ def poll(client: TestClient, run_id: str, timeout: float = 60.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         run = client.get(f"/runs/{run_id}").json()["run"]
+        if run["status"] == "awaiting_confirm":
+            client.post(f"/runs/{run_id}/confirm")
         if run["status"] in {"succeeded", "failed", "canceled"}:
             return run
         time.sleep(0.2)

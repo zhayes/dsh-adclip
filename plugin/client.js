@@ -1049,14 +1049,15 @@ window.__ModuleLoader__.load({
     }
 
     function StatusBadge({ status }) {
-      const cls = status === 'succeeded' ? 'ok' : status === 'failed' || status === 'canceled' ? 'bad' : status === 'running' || status === 'queued' ? 'warn' : ''
-      const label = { queued: '排队', running: '生成中', succeeded: '完成', failed: '失败', canceled: '已取消', interrupted: '中断' }[status] || status
+      const cls = status === 'succeeded' ? 'ok' : status === 'failed' || status === 'canceled' ? 'bad' : status === 'running' || status === 'queued' || status === 'awaiting_confirm' ? 'warn' : ''
+      const label = { queued: '排队', running: '生成中', awaiting_confirm: '待确认', succeeded: '完成', failed: '失败', canceled: '已取消', interrupted: '中断' }[status] || status
       return h(Badge, { status: cls }, label)
     }
 
     function RunCard({ run, onOpen }) {
       return h('div', { className: 'adp-run-card', onClick: () => onOpen(run) },
         h('div', { className: 'adp-row' }, h('div', { className: 'adp-h2 adp-grow' }, run.title || run.scenario), h(StatusBadge, { status: run.status })),
+        run.status === 'awaiting_confirm' ? h('div', { className: 'adp-small', style: { marginTop: 3, color: '#C99B54' } }, '提示词已生成，等待确认后开始生成') : null,
         h('div', { className: 'adp-small adp-muted', style: { marginTop: 4 } }, run.scenario === 'text-to-image' ? ('文生图片 · ' + ((run.advanced && run.advanced.aspect) || '1:1') + ' · ' + ((run.advanced && run.advanced.area) || '2K')) : (run.scenario + ' · ' + ((run.advanced && run.advanced.duration) || 0) + 's · ' + ((run.advanced && run.advanced.aspect) || '9:16'))),
         h('div', { className: 'adp-progress', style: { marginTop: 8 } }, h('i', { style: { width: Math.round((run.progress || 0) * 100) + '%' } })),
         h('div', { className: 'adp-small adp-faint', style: { marginTop: 5 } }, run.step || '—', run.error ? ' · ' + String(run.error).slice(0, 80) : '')
@@ -1163,6 +1164,7 @@ window.__ModuleLoader__.load({
       const postOnly = changes.length > 0 && changes.every((c) => c.stage === 'post')
       const h3Mode = (run.selection || {}).mode === 'h3_reference'
       const running = run.status === 'running' || run.status === 'queued'
+      const awaiting = run.status === 'awaiting_confirm'
       const editDirty = edit.aspect !== (adv.aspect || '9:16') || edit.resolution !== (adv.resolution || '720p') || Number(edit.duration) !== Number(adv.duration || 12)
       const hasEdits = (run.segment_edits || []).length > 0
 
@@ -1216,6 +1218,14 @@ window.__ModuleLoader__.load({
         try { await navigator.clipboard.writeText(promptText); setPromptSaved(false); setErr('') } catch (e) { setErr('复制失败，请手动选择文本') }
       }
 
+      const confirmRun = async () => {
+        setBusy('confirm'); setErr('')
+        try {
+          const data = await api('/runs/' + run.id + '/confirm', { method: 'POST' })
+          onChanged && onChanged(data.run)
+        } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
+      }
+
       const loadSb = useCallback(async () => {
         setBusy('sb'); setErr('')
         try {
@@ -1224,13 +1234,13 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
       }, [run.id])
 
-      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video)) void loadSb() }, [run.status, run.result, run.version, loadSb])
+      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video) || run.status === 'awaiting_confirm') void loadSb() }, [run.status, run.result, run.version, loadSb])
 
       const loadAnalysis = useCallback(async () => {
         if (run.scenario !== 'viral-remake') return
         try { setAnalysis(await api('/runs/' + run.id + '/analysis')) } catch { setAnalysis(null) }
       }, [run.id, run.scenario])
-      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video)) void loadAnalysis() }, [run.status, run.result, run.version, loadAnalysis])
+      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video) || run.status === 'awaiting_confirm') void loadAnalysis() }, [run.status, run.result, run.version, loadAnalysis])
 
       const openEdit = () => {
         setEdit({ aspect: adv.aspect || '9:16', resolution: adv.resolution || '720p', duration: adv.duration || 12 })
@@ -1346,6 +1356,17 @@ window.__ModuleLoader__.load({
           h('div', { className: 'adp-result-badges' }, h(StatusBadge, { status: run.status }))
         ),
         run.error ? h('div', { className: 'adp-error' }, run.error) : null,
+        awaiting ? h('div', { className: 'adp-confirm-card', style: { marginBottom: 12 } },
+          h('div', { className: 'adp-confirm-head' },
+            h('b', null, '提示词已生成，等待你确认'),
+            h('span', { className: 'adp-confirm-tag' }, 'AWAITING CONFIRM')
+          ),
+          h('div', { className: 'adp-confirm-brief' }, '拆解和台词都已完成。确认后才会调用视频模型（消耗一次生成）；可先预览并按需修改。'),
+          h('div', { className: 'adp-confirm-actions' },
+            h('button', { className: 'adp-btn ghost', onClick: () => setPromptOpen(true) }, promptOpen ? '提示词已展开' : '预览提示词'),
+            h('button', { className: 'adp-btn primary', onClick: confirmRun, disabled: busy === 'confirm' }, busy === 'confirm' ? '提交中…' : '确认并开始生成')
+          )
+        ) : null,
         h('div', { className: 'adp-result-grid' },
           h('div', { className: 'adp-stage' },
             video ? h('video', { className: 'adp-stage-video', src: video, controls: true, playsInline: true, poster: storyboard[0] && storyboard[0].thumbnail ? mediaUrlVersion(storyboard[0].thumbnail, run.version) : undefined }) : h('div', { className: 'adp-empty-stage' }, running ? '正在生成…' : '还没有可播放的成片'),
@@ -1548,6 +1569,9 @@ window.__ModuleLoader__.load({
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
       const [advanced, setAdvanced] = useState({ duration: 12, aspect: '9:16', resolution: '720p', model: '' })
+      // Default: pause after the prompt is rendered so it can be reviewed before
+      // spending a generation. Checking this skips that pause.
+      const [skipConfirm, setSkipConfirm] = useState(false)
       const [replaceScope, setReplaceScope] = useState('both')
       const [personScope, setPersonScope] = useState('main')
       const [audioMode, setAudioMode] = useState('regenerate')
@@ -1626,11 +1650,12 @@ window.__ModuleLoader__.load({
           const data = await api('/runs', { method: 'POST', body: {
             scenario: 'viral-remake',
             inputs: { reference_asset_id: refAsset.id, product_asset_ids: products.map(p => p.id), brief },
-            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: replaceScope, person_scope: personScope, audio_mode: audioMode }, personaPayload),
+            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: replaceScope, person_scope: personScope, audio_mode: audioMode, prompt_confirm: !skipConfirm }, personaPayload),
           } })
           onStarted(data.run)
           // A submitted remake is done: clear the form so the next visit starts empty.
           setBrief(''); setRefAsset(null); setProducts([]); setPreview(null)
+          setSkipConfirm(false)
           setPersonaEnabled(false); setPersonaId('')
           setDetected(detectVideoParams('')); setTouched({})
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
@@ -1739,9 +1764,13 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'adp-action-note' },
                   !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
                   h('br'),
-                  '开始后可在结果页看分镜、派生新版本。'
+                  skipConfirm ? '已勾选跳过确认：会直接开始生成，不暂停。' : '默认会先停下让你确认提示词，确认后才生成。'
                 ),
                 h('div', { className: 'adp-grow' }),
+                h('label', { className: 'adp-model-enable', style: { marginRight: 12 }, title: '不勾选：生成前先停下来让你确认提示词；勾选：直接开始生成' },
+                  h('input', { type: 'checkbox', checked: skipConfirm, onChange: (e) => setSkipConfirm(e.currentTarget.checked) }),
+                  '跳过二次确认'
+                ),
                 h('button', { className: 'adp-primary', onClick: start, disabled: busy || !refAsset },
                   busy ? '正在启动…' : '开始复刻',
                   h('span', { className: 'arrow' }, '→')

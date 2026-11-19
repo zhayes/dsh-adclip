@@ -38,6 +38,8 @@ def poll(client: TestClient, run_id: str, timeout: float = 30.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         run = client.get(f"/runs/{run_id}").json()["run"]
+        if run["status"] == "awaiting_confirm":
+            client.post(f"/runs/{run_id}/confirm")
         if run["status"] in {"succeeded", "failed", "canceled"}:
             return run
         time.sleep(0.2)
@@ -112,8 +114,48 @@ def main() -> None:
             "advanced": {"duration": 6, "aspect": "9:16", "resolution": "720p"},
         })
         assert res.status_code == 202, res.text
-        run = poll(client, res.json()["run"]["id"])
+        gated_id = res.json()["run"]["id"]
+        # The prompt is the expensive step: the run must wait for a human
+        # confirmation before calling the video model.
+        paused = None
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            paused = client.get(f"/runs/{gated_id}").json()["run"]
+            if paused["status"] in {"awaiting_confirm", "failed"}:
+                break
+            if paused["status"] == "succeeded":
+                break
+            time.sleep(0.2)
+        assert paused and paused["status"] == "awaiting_confirm", paused
+        assert not (paused.get("result") or {}).get("video"), paused.get("result")
+        preview = client.get(f"/runs/{gated_id}/prompt")
+        assert preview.status_code == 200, preview.text
+        assert len(preview.json()["text"]) > 20, preview.json()
+        confirmed = client.post(f"/runs/{gated_id}/confirm")
+        assert confirmed.status_code == 200, confirmed.text
+        run = poll(client, gated_id)
         assert run["status"] == "succeeded", run.get("error")
+
+        # Opting out generates straight away, with no confirmation pause.
+        fast = client.post("/runs", json={
+            "scenario": "viral-remake",
+            "inputs": {"reference_asset_id": a["id"], "brief": "同一商品，活动价 19.9。"},
+            "advanced": {"duration": 6, "aspect": "9:16", "resolution": "720p", "prompt_confirm": False},
+        })
+        assert fast.status_code == 202, fast.text
+        fast_id = fast.json()["run"]["id"]
+        paused_again = False
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            row = client.get(f"/runs/{fast_id}").json()["run"]
+            if row["status"] == "awaiting_confirm":
+                paused_again = True
+                break
+            if row["status"] in {"succeeded", "failed", "canceled"}:
+                break
+            time.sleep(0.2)
+        assert not paused_again, "prompt_confirm=False must not pause"
+        assert row["status"] == "succeeded", row.get("error")
         assert run["result"]["video"].endswith("final.mp4")
         assert run.get("selection", {}).get("mode") in {"generation", "generation_fallback"}, run.get("selection")
         capabilities = client.get("/capabilities")

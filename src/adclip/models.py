@@ -83,7 +83,7 @@ class Run(BaseModel):
     id: str
     scenario: str
     title: str = "未命名"
-    status: Literal["queued", "running", "succeeded", "failed", "canceled", "interrupted"] = "queued"
+    status: Literal["queued", "running", "awaiting_confirm", "succeeded", "failed", "canceled", "interrupted"] = "queued"
     step: str = "queued"
     progress: float = 0.0
     generation_mode: Literal["fast", "fine"] = "fast"

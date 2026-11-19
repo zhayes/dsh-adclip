@@ -86,6 +86,7 @@ DEFAULT_ADVANCED = {
     "person_scope": "main",
     "audio_mode": "regenerate",
     "subtitle": "off",
+    "prompt_confirm": True,
     "export_bitrate": "8M",
     "fps": 30,
 }

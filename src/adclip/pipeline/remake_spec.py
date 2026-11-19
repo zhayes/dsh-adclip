@@ -68,15 +68,15 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
             if row_end - row_start < 0.4:
                 row_end = min(end_s - timing.TAIL_S, row_start + 0.4)
             window = max(0.4, row_end - row_start)
-            # Only cut what is physically impossible in this window: the
-            # script prompt already asks for one short line per window.
-            fitted, _ = timing.fit_lines(
-                [line], window, cps=timing.MAX_CPS, grace=1.0, single_grace=1.0
-            )
+            # Keep the wording intact: squeezing it to "fit" is what changed
+            # sentences the operator never asked to change. QA reports a slot
+            # that is genuinely too short instead of hiding it.
             aligned.append({
                 "start_s": round(row_start, 2),
                 "end_s": round(row_end, 2),
-                "text": (fitted or [line])[0],
+                "text": line,
+                "needs_s": round(timing.speak_seconds(line, timing.MAX_CPS), 2),
+                "window_s": round(window, 2),
             })
         if all(item["end_s"] > item["start_s"] for item in aligned):
             return aligned
@@ -85,34 +85,6 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
         lines, timing.speak_span(end_s - start_s), cps=timing.MAX_CPS, grace=timing.GRACE
     )
     return timing.schedule(lines, start_s, end_s)
-
-
-def _clip_level_fit(shots: list[dict[str, Any]], duration: Any) -> None:
-    """Trim the longest lines until the whole script fits the clip.
-
-    A generation model recites continuously at roughly four characters a
-    second; per-shot windows cannot see the other shots, so a script that only
-    fits when every shot is packed is exactly the one that loses its last
-    words. Only the longest line shrinks, never below four characters.
-    """
-    total_duration = float(duration or 0)
-    if total_duration <= 0:
-        return
-    limit = timing.char_budget(timing.speak_span(total_duration), timing.DEFAULT_CPS)
-    rows = [row for shot in shots for row in shot.get("timed_lines") or []]
-    total = sum(len(str(row.get("text") or "")) for row in rows)
-    if total <= limit or not rows:
-        return
-    if len(rows) == 1:
-        rows[0]["text"] = timing.shorten(str(rows[0].get("text") or ""), limit)
-        return
-    # The closing line carries the price or the punchline: shrink the others
-    # proportionally and leave it whole.
-    closing = str(rows[-1].get("text") or "")
-    others = rows[:-1]
-    budget = max(timing.MIN_LINE_CHARS * len(others), limit - len(closing))
-    for row, text in zip(others, timing.fit_chars([str(item.get("text") or "") for item in others], budget)):
-        row["text"] = text
 
 
 def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> dict[str, Any]:
@@ -162,7 +134,6 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
         if not shot.get("pace_cps"):
             shot["pace_cps"] = round(float(pace), 2) if pace else None
         shot["timed_lines"] = _timed_lines(shot)
-    _clip_level_fit(shots, source.get("duration_s"))
     scope = str(advanced.get("replace_scope") or "both")
     replace = ["商品"] if scope == "product" else ["人物"] if scope == "person" else ["人物", "商品"]
     return {

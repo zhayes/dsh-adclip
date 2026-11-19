@@ -1,5 +1,28 @@
 # Progress / handoff
 
+## 生成前确认提示词（awaiting_confirm）
+
+- 爆款复刻在“改编脚本”之后停下来：`runner.STEPS` 新增 `confirm`，run 状态变为
+  `awaiting_confirm`，进度 0.32，**不调用视频模型**。
+- `POST /runs/{id}/confirm` → `runner.confirm()` 写入 `advanced.prompt_confirmed` 并以
+  `resume=True` 继续：跳过 analyze/gag/script（不重复花文字模型 token），
+  直接从 generate 跑到 qa。
+- 提示词预览用现有的 `GET /runs/{id}/prompt`（不产生费用），可在确认前编辑保存
+  （`/prompt-override`）。
+- UI：任务详情顶部出现“提示词已生成，等待你确认”卡片（含 AWAITING CONFIRM 标签 +
+  预览/确认按钮）；任务列表卡片的状态徽标显示「待确认」并在标题下提示。
+- 自由创作不重复确认（用户在提案卡上已经确认过），只对 `viral-remake` 生效。
+
+## 台词：只改要求的词，其余原样保留
+
+- `_rewrite_in_place` 的提示词不再给每句字数上限，改为：
+  “只改用户明确要求改的词；用户没提到的句子原样输出，一个字都不要改”。
+  实测输出：`你们都在抢啊？` / `抢这个厚实又暖和的豆豆云朵被呢？` /
+  `系统标错了，现在只要七十多。` — 只有商品名和价格变了。
+- `_timed_lines()` 不再按时间窗裁剪台词，只对齐时间窗；原片念得完的句子不该被我们改短。
+  若某句确实超出模型可念速度，QA 的「台词时长」会报 warn，由用户在确认环节决定。
+- 移除了 `_clip_level_fit()`（全片字数裁剪），它正是“改台词”的另一个来源。
+
 ## 台词改为“按拆解逐句改写”（rewrite-in-place）
 
 - `script._rewrite_in_place()`：拆解已经知道每句说了什么、在第几秒。现在把

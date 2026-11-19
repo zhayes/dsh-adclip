@@ -50,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.21"
+VERSION = "0.1.23"
 
 
 def _media_type(path: Path) -> str:
@@ -356,6 +356,9 @@ def _validate_inputs(scenario: dict[str, Any], inputs: dict[str, Any]) -> None:
 def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any], *, title: str = "", parent: Run | None = None, changes: list[dict[str, Any]] | None = None) -> Run:
     if scenario_id == "viral-remake":
         advanced = params.enforce_remake_audio(advanced)
+    # A confirmation belongs to one run: a derived or retried run renders its own
+    # prompt and must be confirmed again (unless the operator opted out).
+    advanced = {key: value for key, value in (advanced or {}).items() if key != "prompt_confirmed"}
     run_id = store.new_id("run")
     store.run_dir(run_id).mkdir(parents=True, exist_ok=True)
     (store.run_dir(run_id) / "artifacts").mkdir(parents=True, exist_ok=True)
@@ -530,12 +533,27 @@ def cancel_run(run_id: str) -> dict[str, Any]:
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     run.cancel_requested = True
-    if run.status in {"queued", "running"}:
+    if run.status in {"queued", "running", "awaiting_confirm"}:
         run.status = "canceled"
         run.error = "已取消"
         run.finished_at = store.now()
     store.write_run(run)
     return {"ok": True, "run": run.model_dump()}
+
+
+@app.post("/runs/{run_id}/confirm")
+def confirm_run(run_id: str) -> dict[str, Any]:
+    """Approve the rendered prompt and let the generation step spend tokens."""
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run.status != "awaiting_confirm":
+        raise HTTPException(status_code=409, detail="run is not waiting for confirmation")
+    try:
+        runner.confirm(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "run": (store.read_run(run_id) or run).model_dump()}
 
 
 @app.post("/runs/{run_id}/retry")
