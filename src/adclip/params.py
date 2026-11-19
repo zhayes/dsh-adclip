@@ -77,7 +77,6 @@ def size_for(aspect: str, resolution: str) -> tuple[int, int]:
 
 
 DEFAULT_ADVANCED = {
-    "generation_mode": "fast",
     "duration": 12,
     "aspect": "9:16",
     "resolution": "720p",
@@ -104,7 +103,6 @@ SCENARIOS: list[dict[str, Any]] = [
             {"key": "brief", "type": "text", "label": "产品信息、卖点、价格及修改要求", "max_length": 2000},
         ],
         "advanced": [
-            {"key": "generation_mode", "label": "生成模式", "type": "enum", "options": ["fast", "fine"], "default": "fast"},
             {"key": "duration", "label": "时长", "type": "enum", "options": [5, 8, 10, 12, 15, 30], "default": 12},
             {"key": "aspect", "label": "比例", "type": "enum", "options": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"], "default": "9:16"},
             {"key": "resolution", "label": "清晰度", "type": "enum", "options": ["480p", "720p", "1080p"], "default": "720p"},

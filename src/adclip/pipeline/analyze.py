@@ -10,6 +10,7 @@ from typing import Any
 
 from .. import analysis_cache, store
 from ..media import asr, ffmpeg, similarity, vision
+from . import timing
 
 
 def _dialogue_gaps(transcript: list[dict[str, Any]], *, min_gap: float = 0.6) -> list[float]:
@@ -167,6 +168,17 @@ def _snap_beats(beats: list[dict[str, Any]], *, window: float = 0.35, minimum: f
             )
 
 
+def _pace_cps(rows: list[dict[str, Any]]) -> float | None:
+    """Speaking rate of the reference dialogue: characters per spoken second.
+
+    Measured from the ASR timings instead of assumed: an ad that is shouted at
+    7 chars/s must not be remade at a fixed 4 chars/s, or the delivery loses
+    its urgency.
+    """
+    value = timing.measured_cps(rows)
+    return round(value, 2) if value else None
+
+
 def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     scope = str((run.advanced or {}).get("replace_scope") or "both")
     replace = ["商品"] if scope == "product" else ["人物"] if scope == "person" else ["人物", "商品"]
@@ -191,6 +203,9 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
             "continuity": str(view.get("continuity") or ""),
             "scene": str(view.get("scene") or ""),
             "action": str(view.get("action") or ""),
+            "expression": str(view.get("expression") or ""),
+            "tone": str(view.get("tone") or ""),
+            "pace_cps": _pace_cps(beat.get("dialogue_rows") or []),
             "cast": [{"role": "A", "description": people}] if people else [],
             "product": {
                 "name": product_name,
@@ -214,6 +229,7 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
             "asset_id": (run.inputs or {}).get("reference_asset_id"),
         },
         "shots": shots,
+        "pace_cps": _pace_cps([row for beat in beats for row in beat.get("dialogue_rows") or []]),
         "global": {
             "preserve": ["镜头", "景别", "运镜", "场景", "动作", "构图", "节奏", "转场", "原声"],
             "replace": replace,
@@ -360,7 +376,7 @@ def _aggregate_visual(
             by_beat.setdefault(str(frame.get("beat_id")), []).append(item)
     aggregated: dict[str, dict[str, Any]] = {}
     scalar_fields = (
-        "shot_size", "camera_angle", "camera_movement", "action", "product",
+        "shot_size", "camera_angle", "camera_movement", "action", "expression", "tone", "product",
         "product_visibility", "scene", "composition", "on_screen_text", "continuity",
     )
     for beat in beats:

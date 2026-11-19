@@ -83,10 +83,12 @@ def check_dialogue_timing() -> None:
     }
     long_line = {"beats": [{"id": "b0", "lines": [{"speaker": "A", "text": "一" * 30}], "shot": ""}]}
     info = qa._dialogue_timing(run, skeleton, long_line, 4.0)
-    # 30 chars in 4s is 7.5 cps: the slot cannot hold the line, so QA must say so.
+    # The renderer shortens a line that cannot be said inside the shot, so the
+    # check reports the fitted text rather than a guaranteed overflow.
     assert info and info["lines"] == 1, info
-    assert info["tight_count"] == 1, info
-    assert info["cps"] == 7.5, info
+    assert info["chars"] < 30, info
+    assert info["tight_count"] == 0, info
+    assert info["cps"] <= qa.timing.MAX_CPS, info
 
     short = {"beats": [{"id": "b0", "lines": [{"speaker": "A", "text": "只需七十多"}], "shot": ""}]}
     ok = qa._dialogue_timing(run, skeleton, short, 4.0)

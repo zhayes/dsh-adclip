@@ -48,6 +48,8 @@ VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考�
     "camera_movement": "固定/推/拉/摇/移/跟/手持",
     "people": "人数与人物关系，20字内",
     "action": "画面中可见动作，20字内",
+    "expression": "人物表情与情绪，20字内，如夸张瞪眼/得意微笑/一脸怀疑/捂嘴笑",
+    "tone": "说话语气，15字内，如夸张叫卖/急切追问/轻松调侃/温柔推荐；没人在说话就留空",
     "product": "商品及可见包装，20字内；看不清写未识别商品",
     "product_visibility": "主体/背景/部分遮挡/不可见",
     "scene": "场景，15字内",
@@ -62,6 +64,8 @@ VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考�
 - 商品名只有包装清晰可读时才填；不要编造品牌、价格、功效。
 - on_screen_text 不翻译、不补价格。
 - 人物只写画面中可见的人数/关系，不推测身份。
+- expression 只写看得见的表情，不写性格或心理活动；看不清留空。
+- tone 只在人物确实在说话时判断，参考嘴型和张嘴/笑/皱眉等可见线索；多帧连起来判断情绪走向。
 - 多帧一起看可以用前后帧判断连续性，但不能把不同帧的内容混到同一帧。
 - 标签尽量短，方便后续生成使用。"""
 
@@ -133,6 +137,8 @@ def _normalize_rows(value: dict[str, Any] | None, labels: list[str]) -> dict[str
         out[frame_id] = {
             "shot_size": str(row.get("shot_size") or "")[:30],
             "action": str(row.get("action") or "")[:200],
+            "expression": str(row.get("expression") or "")[:60],
+            "tone": str(row.get("tone") or "")[:60],
             "people": str(row.get("people") or row.get("people_relation") or "")[:100],
             "product": str(row.get("product") or "")[:120],
             "scene": str(row.get("scene") or "")[:80],

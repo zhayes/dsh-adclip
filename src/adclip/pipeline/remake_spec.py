@@ -40,9 +40,10 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
     if not lines:
         return []
     span = float(shot.get("end_s") or 0) - float(shot.get("start_s") or 0)
+    end_s = float(shot.get("end_s") or 0)
     # Last guard before the prompt: a line that no human could say inside the
     # shot is shortened here, so the model is never asked for the impossible.
-    lines, _ = timing.fit_lines(lines, span, cps=timing.MAX_CPS)
+    lines, _ = timing.fit_lines(lines, timing.speak_span(span), cps=timing.MAX_CPS)
     rows = shot.get("dialogue_rows") or []
     if len(rows) == len(lines):
         aligned = [
@@ -53,12 +54,16 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
             }
             for line, row in zip(lines, rows)
         ]
+        # Real ASR timings are only reused when the line still ends before the
+        # cut: a line that runs to the last frame gets clipped, and the model
+        # then starts the next shot late, which reads as a long pause.
         if all(
             item["end_s"] - item["start_s"] >= timing.speak_seconds(item["text"], timing.MAX_CPS)
+            and item["end_s"] <= end_s - timing.TAIL_S + 1e-6
             for item in aligned
         ):
             return aligned
-    return timing.schedule(lines, float(shot.get("start_s") or 0), float(shot.get("end_s") or 0))
+    return timing.schedule(lines, float(shot.get("start_s") or 0), end_s)
 
 
 def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> dict[str, Any]:
@@ -85,6 +90,9 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             "scene": str(shot.get("scene") or ""),
             "action": str(script_beat.get("shot") or shot.get("action") or ""),
             "reference_action": str(shot.get("action") or ""),
+            "expression": str(shot.get("expression") or ""),
+            "tone": str(shot.get("tone") or ""),
+            "pace_cps": (float(shot["pace_cps"]) if isinstance(shot.get("pace_cps"), (int, float)) and shot["pace_cps"] else None),
             "cast": list(shot.get("cast") or []),
             "product": dict(shot.get("product") or {}),
             "on_screen_text": str(shot.get("on_screen_text") or ""),
@@ -97,7 +105,12 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
                 if str((line or {}).get("text") or "").strip()
             ],
         })
+    pace = plan.get("pace_cps")
+    if not isinstance(pace, (int, float)) or not pace:
+        pace = timing.measured_cps([row for shot in shots for row in shot.get("dialogue_rows") or []])
     for shot in shots:
+        if not shot.get("pace_cps"):
+            shot["pace_cps"] = round(float(pace), 2) if pace else None
         shot["timed_lines"] = _timed_lines(shot)
     scope = str(advanced.get("replace_scope") or "both")
     replace = ["商品"] if scope == "product" else ["人物"] if scope == "person" else ["人物", "商品"]
@@ -114,6 +127,7 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             "preserve": list((plan.get("global") or {}).get("preserve") or ["镜头", "景别", "运镜", "场景", "动作", "构图", "节奏", "转场"]),
             "replace": replace,
             "persona": persona_mod.persona_instruction(advanced),
+            "pace_cps": round(float(pace), 2) if pace else None,
         },
         "requirements": requirements.derive(str(inputs.get("brief") or ""), advanced),
         "overrides": str(inputs.get("explicit_overrides") or "").strip(),
@@ -155,6 +169,13 @@ def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replac
         lines.append("动作：" + action)
     if shot.get("composition"):
         lines.append("构图：" + str(shot["composition"]))
+    if shot.get("expression"):
+        lines.append("表情：" + str(shot["expression"]))
+    tone = str(shot.get("tone") or "").strip()
+    pace_label = timing.pace_label(shot.get("pace_cps"))
+    delivery = "；".join(value for value in (tone, ("语速" + pace_label) if pace_label else "") if value)
+    if delivery:
+        lines.append("语气：" + delivery)
     if shot.get("continuity") and str(shot["continuity"]) not in {"不确定", "unknown"}:
         lines.append("衔接：" + str(shot["continuity"]))
     if index > 0 and str(shot.get("transition_in") or "cut") == "cut":
@@ -210,7 +231,7 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if materials:
         head.append("【素材】" + "；".join(materials) + "。")
 
-    persona = str((spec.get("global") or {}).get("persona") or "").strip()
+    persona = str((spec.get("global") or {}).get("persona") or "").strip().rstrip("。；;，,")
     cast = [item.get("description") for shot in shots for item in shot.get("cast") or [] if item.get("description")]
     if persona:
         head.append(f"【人物】{persona}，面向镜头自然交流；人数、站位与参考片一致。")
@@ -232,9 +253,19 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if dialogue:
         head.append(
             f"【台词要求】共 {len(dialogue)} 句，必须逐句完整念完，不得省略、合并或改写；"
-            "标准普通话，同一时间只有一个人说话；每句说完停 0.2–0.5 秒。"
+            "标准普通话，同一时间只有一个人说话；句间只留约 0.1 秒换气，"
+            "不要出现明显空白或静音段；镜头切换处不要停，上一句说完直接切。"
         )
-        head.append("【语速】按每秒 4–5 个字念，严格贴着每句标注的起止时间；句子还没念完不要切走。")
+        pace = (spec.get("global") or {}).get("pace_cps")
+        if pace:
+            label = timing.pace_label(pace)
+            head.append(
+                f"【语速】原片约每秒 {float(pace):.1f} 个字" + (f"，{label}" if label else "")
+                + "；用同样的语气和节奏复刻，不要拖慢也不要像播报员念稿。"
+            )
+        else:
+            head.append("【语速】按参考片的节奏念，不要拖慢也不要像播报员念稿。")
+        head.append("严格贴着每句标注的起止时间；句子还没念完不要切走。")
         prices = [str(value) for value in req.get("prices") or []]
         if prices:
             head.append("必须清楚说出价格：" + "、".join(prices) + "。")
@@ -284,7 +315,11 @@ def render_reference(spec: dict[str, Any], *, limit: int = 1500) -> str:
         for row in shot.get("timed_lines") or []:
             dialogue.append(f"[{float(row['start_s']):.1f}–{float(row['end_s']):.1f}s] {row['text']}")
     if dialogue:
-        lines.append("台词（按顺序逐句念完，不得省略或合并，不要念镜头描述；语速每秒 4–5 个字）：")
+        lines.append(
+            "台词（按顺序逐句念完，不得省略或合并，不要念镜头描述"
+            + (f"；语速每秒约 {(spec.get('global') or {}).get('pace_cps'):.1f} 个字" if (spec.get("global") or {}).get("pace_cps") else "")
+            + "）："
+        )
         lines.extend(dialogue[:12])
         if req.get("prices"):
             lines.append("必须清楚说出价格：" + "、".join(req["prices"]) + "。")

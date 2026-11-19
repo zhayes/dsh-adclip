@@ -1,5 +1,20 @@
 # Progress / handoff
 
+## 语气复刻：语速实测 + 表情/语气解析
+
+- 语速不再写死。`timing.measured_cps()` 从 ASR 的 `dialogue_rows` 算出参考片实际语速
+  （字/秒），`timing.fit_cps()` 把它夹到 [3.2, 5.5]，脚本预算、镜头时长分配、提示词全部用它。
+  提示词现在是“【语速】原片约每秒 7.4 个字，偏快（像直播叫卖）；用同样的语气和节奏复刻”，
+  每个镜头还会单独写 `语气：… 语速偏快`。预算仍以 5.5 字/秒封顶：写超出物理上限的台词
+  正是最后一句被切的原因。
+- 拆解新增两个字段：`expression`（可见表情/情绪）和 `tone`（说话语气），
+  `VISION_PROMPT`、`_normalize_rows`、`_aggregate_visual`、`_remake_plan`（`expression`/`tone`/`pace_cps`）
+  一路带到 `build_spec`，最终渲染成每个镜头的 `表情：` 和 `语气：` 两行。
+  实测（DSH 视觉桥 deepseek-flash）：`expression: 睁眼张嘴，略显惊讶`、`tone: 急切解释`。
+  拆解面板也会显示“表情/语气/语速”一行。`CACHE_VERSION` → `6`（旧的拆解没有这两个字段）。
+- `render_generation` 不再输出“按每秒 4–5 个字念”；脚本提示词还多了一条
+  “台词要能连得上参考片的语气：原片快的就写短句、可叫卖式”。
+
 ## 拆解继承 / 缓存签名 / 参数清理
 
 - `render_generation` 现在按镜头输出：每个镜头一块，带自己的景别·运镜·角度、场景、动作、
@@ -10,11 +25,14 @@
   / `dsh` 的组合）。停用某个提供方后 key 变了，不会再重放它产出的旧拆解——之前
   “已停用 Doubao 但界面还显示 doubao 模型”就是命中了旧缓存（`analysis.cached`）。
   拆解面板现在也会标「缓存结果」。`CACHE_VERSION` → `5`。
-- 台词时长：`fit_lines` 的预算回到自然语速 4 字/秒（单句放宽 1.5 倍、多句 1.15 倍），
-  渲染前再按 5.5 字/秒的物理上限兜一次；`TAIL_S` 0.25 → 0.45，最后一句离切点更远。
+- 台词时长：`fit_lines` 的预算用 `timing.speak_span()`（镜头时长减去 `TAIL_S=0.45`），
+  所以每句都会在切点前留出余量；ASR 真实时间戳只在结束点早于切点时复用，
+  否则改用 `schedule()`。渲染前再按 5.5 字/秒的物理上限兜一次。
+  提示词也改成“句间只留 0.1 秒换气、切换处不要停、每秒 4 个字”，
+  之前写的“每句停 0.2–0.5 秒”会让模型在镜头切换处空一拍。
 - 删掉了从未被读取的 `advanced` 字段：`fidelity`、`language`、`native_audio`、`music`、
-  `aigc_label`，以及 `subtitle_size`；对应的“字幕字号”“背景音乐”意图规则一并移除
-  （本地 ffmpeg 没有 libass/drawtext，这些字段只会伪造一个已改的假象）。
+  `aigc_label`、`subtitle_size`，以及 `generation_mode`（“快速/精细”从来没改变生成方式）；
+  对应的“字幕字号”“背景音乐”“精细模式”意图规则一并移除。
 
 ## 文本 / 视觉模型的启用开关
 

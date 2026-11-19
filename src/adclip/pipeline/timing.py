@@ -13,6 +13,7 @@ from __future__ import annotations
 
 DEFAULT_CPS = 4.0
 MAX_CPS = 5.5
+PACE_FLOOR = 3.2
 GRACE = 1.15
 SINGLE_GRACE = 1.5
 MIN_LINE_S = 0.7
@@ -27,9 +28,62 @@ def speak_seconds(text: str, cps: float = DEFAULT_CPS) -> float:
     return max(MIN_LINE_S, len(str(text or "")) / max(0.5, cps))
 
 
+def measured_cps(rows: list[dict[str, Any]] | None) -> float | None:
+    """Speaking rate of the reference dialogue, in characters per spoken second."""
+    spoken = 0.0
+    chars = 0
+    for row in rows or []:
+        try:
+            span = float(row.get("end_s") or 0) - float(row.get("start_s") or 0)
+        except (TypeError, ValueError):
+            continue
+        text = str(row.get("text") or "").strip()
+        if span <= 0.2 or not text:
+            continue
+        spoken += span
+        chars += len(text)
+    if spoken <= 0.0 or not chars:
+        return None
+    return chars / spoken
+
+
+def fit_cps(measured: float | None, *, floor: float = PACE_FLOOR, ceiling: float = MAX_CPS) -> float:
+    """Budget a beat at the reference's pace, inside what a speaker can do.
+
+    A reference shouted at 7 chars/s is remade faster than a calm one, but the
+    budget never assumes more than `MAX_CPS`: text written for an impossible
+    pace is exactly what gets clipped at the end.
+    """
+    if not measured:
+        return DEFAULT_CPS
+    return max(floor, min(ceiling, float(measured)))
+
+
+def pace_label(cps: float | None) -> str:
+    if not cps:
+        return ""
+    if cps >= 5.2:
+        return "偏快（像直播叫卖）"
+    if cps >= 4.4:
+        return "较快"
+    if cps >= 3.4:
+        return "正常"
+    return "偏慢（像聊天）"
+
+
 def char_budget(seconds: float, cps: float = DEFAULT_CPS) -> int:
     """How many characters fit in `seconds`."""
     return max(MIN_LINE_CHARS, int(max(0.5, seconds) * max(0.5, cps)))
+
+
+def speak_span(seconds: float) -> float:
+    """The part of a shot's length available for speech.
+
+    The tail is not padding: a line that ends exactly on the cut is clipped by
+    the next shot, and a model that starts its next sentence late reads as a
+    long pause between cuts.
+    """
+    return max(0.5, float(seconds) - TAIL_S)
 
 
 def _cut(text: str, limit: int) -> str:

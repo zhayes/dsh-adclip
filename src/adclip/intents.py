@@ -82,12 +82,6 @@ def analyze(req: AssistantRequest) -> dict[str, Any]:
         if candidate is not None:
             changes.append(_change("advanced.model", advanced.get("model"), candidate["id"], "generate", "模型"))
 
-    # generation mode
-    if re.search(r"精细|逐镜|分段", text):
-        changes.append(_change("advanced.generation_mode", advanced.get("generation_mode"), "fine", "generate", "生成模式"))
-    elif re.search(r"快速|整条", text):
-        changes.append(_change("advanced.generation_mode", advanced.get("generation_mode"), "fast", "generate", "生成模式"))
-
     # persona gender
     gender = None
     if re.search(r"换成女性|女性|女生|女主", text):

@@ -50,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.15"
+VERSION = "0.1.17"
 
 
 def _media_type(path: Path) -> str:
@@ -375,7 +375,7 @@ def _new_run(scenario_id: str, inputs: dict[str, Any], advanced: dict[str, Any],
         title=title[:60],
         status="queued",
         step="queued",
-        generation_mode=str((advanced or {}).get("generation_mode") or "fast"),
+        generation_mode="fast",
         inputs=inputs,
         advanced=advanced,
         persona_map=persona_map,
@@ -837,7 +837,6 @@ def regenerate_segment(run_id: str, segment_id: str, payload: dict[str, Any] = B
     inputs = copy.deepcopy(parent.inputs)
     changes = list(payload.get("changes") or [])
     _apply_changes(advanced, inputs, changes)
-    advanced["generation_mode"] = "fine"
     new_run = _new_run(parent.scenario, inputs, advanced, title=parent.title, parent=parent, changes=[{"field": "selected_segment_id", "from": None, "to": segment_id, "stage": "generate", "requires_regeneration": True}] + changes)
     return {"run": new_run.model_dump()}
 

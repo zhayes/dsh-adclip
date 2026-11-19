@@ -27,7 +27,7 @@ def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], fi
             "start_s": round(start, 3),
             "end_s": round(end, 3),
             "function": beat.get("function") or "beat",
-            "source": "generated" if run.generation_mode == "fine" else "one_shot_slice",
+            "source": "one_shot_slice",
             "thumbnail": None,
             "dialogue": line,
             "action": (script_beats.get(beat.get("id")) or {}).get("shot") or (beat.get("visual") or {}).get("action") or "",
@@ -37,20 +37,6 @@ def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], fi
             "take": 1,
             "note": "demo analysis segment",
         })
-    # Fine mode must expose the actual generation split even when the reference
-    # is shorter than the target. Keep two readable segments for 8s+ targets.
-    if run.generation_mode == "fine" and len(rows) < 2 and target >= 8:
-        rows = [{
-            "id": "s0", "index": 0, "start_s": 0.0, "end_s": round(target / 2, 3),
-            "function": "hook", "source": "generated", "thumbnail": None,
-            "dialogue": rows[0]["dialogue"] if rows else "", "action": rows[0]["action"] if rows else "",
-            "product": "", "status": "ok", "asset_id": None, "take": 1, "note": "demo fine segment",
-        }, {
-            "id": "s1", "index": 1, "start_s": round(target / 2, 3), "end_s": round(target, 3),
-            "function": "punchline", "source": "generated", "thumbnail": None,
-            "dialogue": "", "action": "产品展示/行动落点", "product": "",
-            "status": "ok", "asset_id": None, "take": 1, "note": "demo fine segment",
-        }]
     if not rows:
         rows = [{
             "id": "s0", "index": 0, "start_s": 0.0, "end_s": round(target, 3), "function": "beat",

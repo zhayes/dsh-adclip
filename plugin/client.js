@@ -633,7 +633,6 @@ window.__ModuleLoader__.load({
       const aspect = (source.match(/(21:9|16:9|9:16|4:3|3:4|1:1)/) || [])[1] || (/竖屏/.test(source) ? '9:16' : /横屏/.test(source) ? '16:9' : /方屏|方形/.test(source) ? '1:1' : '')
       const duration = Number((source.match(/(\d{1,2})\s*(?:秒|s|sec)(?!\w)/i) || [])[1] || 0)
       const resolution = (source.match(/(1080p|720p|480p|2k)/i) || [])[1] || ''
-      const mode = /(精细|分段|分镜)/.test(source) ? 'fine' : ''
       // Subtitles are a sidecar SRT switch. Judge the "off" phrasings first so
       // "不要字幕" never reads as "字幕".
       let subtitle = ''
@@ -644,7 +643,7 @@ window.__ModuleLoader__.load({
       const vendor = /可灵|kling/i.test(source) ? 'kling'
         : /seedance|方舟|ark/i.test(source) ? 'ark'
           : /minimax|海螺|hailuo/i.test(source) ? 'minimax' : ''
-      return { aspect, duration: duration || 0, resolution: resolution ? resolution.toLowerCase().replace('2k', '1080p') : '', mode, subtitle, vendor }
+      return { aspect, duration: duration || 0, resolution: resolution ? resolution.toLowerCase().replace('2k', '1080p') : '', subtitle, vendor }
     }
 
     /** First usable model from a vendor named in the brief, or '' when none. */
@@ -672,7 +671,7 @@ window.__ModuleLoader__.load({
     async function parseIntentWithDsh(brief) {
       try {
         const data = await api('/dsh/chat', { method: 'POST', body: {
-          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、generation_mode（fast|fine 或 null）、subtitle（off|sidecar|null，是否交付 SRT 旁挂字幕）、model_vendor（kling|ark|minimax|null，用户点名的厂商）、reason（一句话）。只按用户明确表达解析，不要猜。',
+          system: '你是广告视频参数解析器。只输出 JSON，不要解释，不要 markdown。字段：aspect（9:16|16:9|1:1|4:3|3:4|21:9 或 null）、duration（整数秒或 null）、resolution（480p|720p|1080p 或 null）、subtitle（off|sidecar|null，是否交付 SRT 旁挂字幕）、model_vendor（kling|ark|minimax|null，用户点名的厂商）、reason（一句话）。只按用户明确表达解析，不要猜。',
           messages: [{ role: 'user', content: [{ type: 'text', text: String(brief || '').slice(0, 1000) }] }],
           maxTokens: 500,
         } })
@@ -689,7 +688,6 @@ window.__ModuleLoader__.load({
           aspect: aspects.includes(value.aspect) ? value.aspect : '',
           duration: Number.isFinite(duration) && duration >= 1 && duration <= 30 ? duration : 0,
           resolution: resolutions.includes(String(value.resolution || '').toLowerCase()) ? String(value.resolution).toLowerCase() : '',
-          mode: value.generation_mode === 'fine' ? 'fine' : '',
           subtitle: ['off', 'sidecar'].includes(value.subtitle) ? value.subtitle : '',
           vendor: vendors.includes(String(value.model_vendor || '')) ? String(value.model_vendor) : '',
         }
@@ -1033,16 +1031,15 @@ window.__ModuleLoader__.load({
       const currentModel = modelOptions.some(o => o.value === v.model) ? v.model : (modelOptions[0] ? modelOptions[0].value : '')
       return h('div', { className: 'adp-col', style: { gap: 9 } },
         h('div', { className: 'adp-field-grid g3' },
-          h(FormSelect, { label: '模式', value: v.generation_mode || 'fast', onChange: (x) => set('generation_mode', x), options: [{ value: 'fast', label: '快速 · 整条' }, { value: 'fine', label: '精细 · 分段' }] }),
           autoTiming
             ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '时长'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, timingNote || '跟随参考片'))
             : h(FormSelect, { label: '时长（秒）', value: v.duration || 12, onChange: (x) => set('duration', Number(x)), options: [5, 8, 10, 12, 15, 30] }),
           autoTiming
             ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '比例'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, aspectNote || '跟随参考片'))
-            : h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] })
+            : h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] }),
+          h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] })
         ),
         h('div', { className: 'adp-field-grid g3' },
-          h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] }),
           autoModel
             ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '模型'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, '自动选择（H3 完整复刻优先）'))
             : h(FormSelect, { label: '模型', value: currentModel, onChange: (x) => set('model', x), options: modelOptions }),
@@ -1428,6 +1425,13 @@ window.__ModuleLoader__.load({
               ),
               h('div', { className: 'adp-shot-dialogue' }, shot.action || '—'),
               h('div', { className: 'adp-shot-action' }, [shot.scene, (shot.product || {}).name, (shot.cast || []).map((x) => x.description).filter(Boolean).join('、')].filter(Boolean).join(' · ') || '—'),
+              (shot.expression || shot.tone || shot.pace_cps)
+                ? h('div', { className: 'adp-small adp-muted' }, [
+                  shot.expression ? '表情 ' + shot.expression : '',
+                  shot.tone ? '语气 ' + shot.tone : '',
+                  shot.pace_cps ? '语速 ' + Number(shot.pace_cps).toFixed(1) + ' 字/秒' : ''
+                ].filter(Boolean).join(' · '))
+                : null,
               (shot.dialogue_rows || []).length
                 ? h('div', { className: 'adp-small adp-muted' }, shot.dialogue_rows.map((row) => fmtAt(row.start_s) + ' ' + row.text).join(' / '))
                 : ((shot.dialogue || []).length ? h('div', { className: 'adp-small adp-muted' }, shot.dialogue.join(' / ')) : null)
@@ -1443,7 +1447,7 @@ window.__ModuleLoader__.load({
         h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '分镜'),
-            h('span', { className: 'adp-storyboard-meta' }, storyboard.length ? storyboard.length + ' 段 · ' + (run.generation_mode === 'fine' ? '精细模式' : '快速模式') : (running ? '生成中…' : (busy === 'sb' ? '读取中…' : '还没有分镜')))
+            h('span', { className: 'adp-storyboard-meta' }, storyboard.length ? storyboard.length + ' 段' : (running ? '生成中…' : (busy === 'sb' ? '读取中…' : '还没有分镜')))
           ),
           storyboard.length ? storyboard.map((seg) => h('div', { key: seg.id, className: 'adp-shot' + (selected && selected.id === seg.id ? ' open' : '') },
             h('div', { className: 'adp-shot-thumb' },
@@ -1543,7 +1547,7 @@ window.__ModuleLoader__.load({
       const [refAsset, setRefAsset] = useState(null)
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
-      const [advanced, setAdvanced] = useState({ generation_mode: 'fast', duration: 12, aspect: '9:16', resolution: '720p', model: '' })
+      const [advanced, setAdvanced] = useState({ duration: 12, aspect: '9:16', resolution: '720p', model: '' })
       const [replaceScope, setReplaceScope] = useState('both')
       const [personScope, setPersonScope] = useState('main')
       const [audioMode, setAudioMode] = useState('regenerate')
@@ -1574,7 +1578,7 @@ window.__ModuleLoader__.load({
       useEffect(() => { setDetected(detectVideoParams(brief)) }, [brief])
       const changeAdvanced = (next) => {
         const changed = {}
-        for (const key of ['aspect', 'duration', 'resolution', 'generation_mode', 'subtitle']) {
+        for (const key of ['aspect', 'duration', 'resolution', 'subtitle']) {
           if (next[key] !== advanced[key]) changed[key] = true
         }
         if (Object.keys(changed).length) setTouched((prev) => Object.assign({}, prev, changed))
@@ -1586,7 +1590,6 @@ window.__ModuleLoader__.load({
       if (detected.aspect && detected.aspect !== advanced.aspect) overrides.push('比例 ' + detected.aspect + '（控件 ' + advanced.aspect + '）')
       if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
       if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
-      if (detected.mode && detected.mode !== advanced.generation_mode) overrides.push('模式 精细（控件 快速）')
       if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
       const savePersona = async () => {
         setPersonaBusy(true); setErr('')
@@ -1608,7 +1611,6 @@ window.__ModuleLoader__.load({
             if (smart.aspect) next.aspect = smart.aspect
             if (smart.duration) next.duration = smart.duration
             if (smart.resolution) next.resolution = smart.resolution
-            if (smart.mode) next.mode = smart.mode
             if (smart.subtitle) next.subtitle = smart.subtitle
             if (smart.vendor) next.vendor = smart.vendor
           }
@@ -1617,7 +1619,6 @@ window.__ModuleLoader__.load({
           if (next.aspect) merged.aspect = next.aspect
           if (next.duration) merged.duration = next.duration
           if (next.resolution) merged.resolution = next.resolution
-          if (next.mode) merged.generation_mode = next.mode
           if (next.subtitle) merged.subtitle = next.subtitle
           const vendorModel = modelForVendor(next.vendor, models)
           if (vendorModel) merged.model = vendorModel

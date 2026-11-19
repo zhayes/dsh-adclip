@@ -109,7 +109,7 @@ def main() -> None:
         res = client.post("/runs", json={
             "scenario": "viral-remake",
             "inputs": {"reference_asset_id": a["id"], "brief": "这个产品现在活动价 19.9，卖点是不油腻，最后引导下单。"},
-            "advanced": {"duration": 6, "aspect": "9:16", "resolution": "720p", "generation_mode": "fast"},
+            "advanced": {"duration": 6, "aspect": "9:16", "resolution": "720p"},
         })
         assert res.status_code == 202, res.text
         run = poll(client, res.json()["run"]["id"])
@@ -178,7 +178,7 @@ def main() -> None:
         with_srt = client.post("/runs", json={
             "scenario": "viral-remake",
             "inputs": {"reference_asset_id": a["id"], "brief": "同一条片子，带字幕交付。"},
-            "advanced": {"duration": 5, "aspect": "9:16", "resolution": "720p", "generation_mode": "fast", "subtitle": "sidecar"},
+            "advanced": {"duration": 5, "aspect": "9:16", "resolution": "720p", "subtitle": "sidecar"},
         })
         assert with_srt.status_code == 202, with_srt.text
         srt_run = poll(client, with_srt.json()["run"]["id"])

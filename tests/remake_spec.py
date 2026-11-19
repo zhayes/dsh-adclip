@@ -123,7 +123,10 @@ def check_generation_prompt() -> None:
     assert "必须逐句完整念完" in text, text
     assert "不得漏句" in text, text
     assert "水印" not in text, "watermark suppression belongs to the provider parameter, not the prompt"
-    assert "每秒 4–5 个字" in text, text
+    assert "每秒 4 个字念" not in text, text
+    assert "【语速】原片约每秒" in text, text
+    assert "严格贴着每句标注的起止时间" in text, text
+    assert "不要出现明显空白或静音段" in text, text
     assert "秒前说完" in text, text
     assert len(text) <= 3500, len(text)
 
@@ -164,6 +167,19 @@ def check_timed_lines_fit() -> None:
     assert rows[0]["end_s"] <= 11.2 - timing.TAIL_S + 1e-6, rows
 
 
+def check_delivery() -> None:
+    """Expression, tone and the measured pace reach the prompt."""
+    skeleton = _skeleton()
+    skeleton["remake_plan"]["shots"][0]["expression"] = "夸张瞪眼、得意"
+    skeleton["remake_plan"]["shots"][0]["tone"] = "夸张叫卖"
+    text = remake_spec.render_generation(remake_spec.build_spec(_run(), skeleton, _script()))
+    assert "表情：夸张瞪眼、得意" in text, text
+    assert "语气：夸张叫卖" in text, text
+    # The reference rows are 15 chars in 2.6s, so the pace label is not "normal".
+    assert "语速偏快" in text, text
+    assert "【语速】原片约每秒" in text, text
+
+
 def check_reference_prompt() -> None:
     spec = remake_spec.build_spec(_run(), _skeleton(), _script())
     text = remake_spec.render_reference(spec)
@@ -190,6 +206,7 @@ def main() -> None:
     check_spec()
     check_generation_prompt()
     check_timed_lines_fit()
+    check_delivery()
     check_multi_shot_prompt()
     check_reference_prompt()
     check_anchor_prompt()
