@@ -84,11 +84,16 @@ and nothing outside `engine/requirements.txt` is ever installed for the user.
 | `libx264`, `aac`, `loudnorm`, `xfade`, `testsrc2`, `anullsrc` | encode, stitch, test mode | part of a full ffmpeg build | a run fails late, not at startup |
 | `MINIMAX_API_KEY` (or ARK/Kling) | paid generation | no | generation pages stay empty |
 | DSH `llm` service | script/analysis text | DSH itself | falls back to MiniMax, then demo copy |
-| `faster-whisper` + HuggingFace model (~500 MB) | optional ASR | **no** — not in `requirements.txt` | silent: no transcript, no error |
+| `faster-whisper` + HuggingFace model (~500 MB) | optional ASR | **no** — not in `requirements.txt` | `analysis.asr.source` says `not_installed`/`failed` and the run warns instead of pretending the clip is silent |
 | VC++ 2015-2022 runtime | ASR/OCR wheels | no | import error inside the venv |
 | `rapidocr-onnxruntime` | declared in `pyproject.toml` only | no | the engine never imports it |
 
 Platform install commands:
+
+依赖提示页（首次启动/设置页）按系统生成安装步骤：Python 与 ffmpeg 给出对应包管理器的
+命令（winget / brew / apt · dnf），可选语音识别给出运行时虚拟环境的真实解释器路径
+（Windows `Scripts\python.exe`，macOS/Linux `bin/python`），模型下载失败的
+`HF_ENDPOINT` 也按 PowerShell 与 POSIX shell 分别给出写法。
 
 | Tool | macOS | Windows | Linux |
 | --- | --- | --- | --- |
@@ -184,7 +189,8 @@ Windows and Linux; only the remediation commands differ.
 | **ffprobe 不可用** but `ffmpeg` works | The bin directory holds one but not the other; install a full ffmpeg build. |
 | **未找到 Python 3.10+** although 3.12 is installed | `py`/`python` resolve to an older default; put the 3.12 directory first on `PATH` or uninstall the old one. |
 | Engine stuck on **引擎准备中** | `<data>/.engine/bootstrap.log`; a pip download over a slow proxy can exceed the 10-minute bootstrap window. |
-| Runs succeed but there is never a transcript | ASR is optional and not installed; `pip install faster-whisper` into `<data>/.engine/venv` and set `HF_ENDPOINT` where HuggingFace is blocked. |
+| Runs succeed but there is never a transcript | Check `GET /adplus/api/asr/status` (or `adclip_transcribe_audio`): `not_installed` → `pip install faster-whisper` into `<data>/.engine/venv`; `failed` → read `last_error`, set `HF_ENDPOINT` where HuggingFace is blocked. |
+| 台词只转出一半 / 同音字多 | 覆盖率不足会自动用无 VAD 模式重试；同音字由**当前文本模型**校正（DSH 默认/run 里选的文本模型，失败自动切 Ark lite→turbo→pro）。`ADSTUDIO_ASR_CLEANUP=0` 关闭，`ADSTUDIO_ASR_CLEANUP_MODEL` 强制指定模型。仍不准时设 `ADSTUDIO_ASR_MODEL=medium`（首次多下载约 1.5GB，速度更慢）。 |
 | Setup page stays on **正在检查环境…** | The Host check threw; restart DSH and look at its log, then 重新检测. |
 | Setup page reappears after 稍后再说 | State could not be written to `<data>/.engine/setup.json` — check the data directory again. |
 | Engine exits right after start | `<data>/.engine/bootstrap.log` and the AdClip Settings tab's engine card. |

@@ -142,6 +142,24 @@ async function listPersonas(supervisor) {
   return readJson(res)
 }
 
+async function transcribeAudio(supervisor, body) {
+  const base = await ensureEngine(supervisor)
+  const res = await fetch(`${base}${API}/transcribe`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-adplus-token': supervisor.token || '' },
+    body: JSON.stringify(body),
+  })
+  return readJson(res)
+}
+
+async function asrStatus(supervisor) {
+  const base = await ensureEngine(supervisor)
+  const res = await fetch(`${base}${API}/asr/status`, {
+    headers: { 'x-adplus-token': supervisor.token || '' },
+  })
+  return readJson(res)
+}
+
 async function stitchVideos(supervisor, body) {
   const base = await ensureEngine(supervisor)
   const res = await fetch(`${base}${API}/stitch`, {
@@ -757,6 +775,63 @@ export function registerAdclipTools(ctx, supervisor) {
         cast: [...new Set(casts)].slice(0, 4),
         preserve: (plan.global || {}).preserve || [],
         warnings: (plan.global || {}).warnings || [],
+      }
+    },
+  })))
+
+  disposers.push(ctx.tools.register(defineTool({
+    name: 'adclip_transcribe_audio',
+    description: 'Transcribe a reference video (asset or run) to Chinese dialogue with timestamps. Returns sentence-level lines with start/end seconds, or word-level rows when word_level is set. When speech recognition is unavailable the result says why instead of returning an empty transcript.',
+    parameters: {
+      asset_id: { type: 'string', description: 'Asset id to transcribe. Use adclip_list_assets when unsure.' },
+      run_id: { type: 'string', description: 'Run id whose reference video should be transcribed; used when asset_id is omitted.' },
+      word_level: { type: 'boolean', description: 'Return per-word timings instead of sentence segments.' },
+      max_seconds: { type: 'number', description: 'Only transcribe the first N seconds (5–300, default 60).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          available: { type: 'boolean', required: true },
+          asset_id: { type: 'string' },
+          model: { type: 'string' },
+          word_level: { type: 'boolean' },
+          lines: { type: 'array', required: true, items: { type: 'json' } },
+          text: { type: 'string' },
+          error: { type: 'string' },
+          hint: { type: 'string' },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.available && value.lines.length
+          ? `台词 ${value.lines.length} 行（${value.model || 'faster-whisper'}）：` + value.lines
+              .slice(0, 6)
+              .map((row) => `${row.start_s}–${row.end_s}s ${row.text}`)
+              .join(' / ')
+          : `未能转写台词：${value.error || (value.available ? '没有识别到语音' : '语音识别不可用')}${value.hint ? `（${value.hint}）` : ''}`,
+      }],
+    },
+    async execute(args) {
+      const body = {
+        asset_id: args.asset_id ? String(args.asset_id) : '',
+        run_id: args.run_id ? String(args.run_id) : '',
+        word_level: Boolean(args.word_level),
+      }
+      if (args.max_seconds) body.max_seconds = Number(args.max_seconds)
+      if (!body.asset_id && !body.run_id) throw new Error('需要 asset_id 或 run_id')
+      const data = await transcribeAudio(supervisor, body)
+      const status = data.status || {}
+      return {
+        available: Boolean(data.available),
+        asset_id: data.asset_id || body.asset_id,
+        model: data.model || status.model || '',
+        word_level: Boolean(data.word_level),
+        lines: data.lines || [],
+        text: data.text || '',
+        error: data.error || status.reason || '',
+        hint: status.hint || '',
       }
     },
   })))

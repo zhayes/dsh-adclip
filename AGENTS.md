@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.12` |
-| Python engine (`adclip.api.VERSION`) | `0.1.9` |
+| DSH plugin (`plugin/package.json`) | `0.5.17` |
+| Python engine (`adclip.api.VERSION`) | `0.1.12` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -298,6 +298,8 @@ PYTHONPATH=src .venv/bin/python tests/segment_edit.py
 PYTHONPATH=src .venv/bin/python tests/fallback.py
 PYTHONPATH=src .venv/bin/python tests/ark_text.py
 PYTHONPATH=src .venv/bin/python tests/script_rules.py
+PYTHONPATH=src .venv/bin/python tests/timing_fit.py
+PYTHONPATH=src .venv/bin/python tests/provider_payloads.py
 PYTHONPATH=src .venv/bin/python tests/smoke.py
 node --check plugin/client.js
 node --check plugin/index.js

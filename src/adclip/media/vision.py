@@ -32,6 +32,7 @@ DSH_VISION_URL = (
 LAST_ERROR = ""
 LAST_PROVIDER = ""
 LAST_MODEL = ""
+LAST_ESCALATED = 0
 
 VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考片按时间顺序排列的关键帧。
 只描述画面中确实看得见的内容，不根据 brief、商品名、常识或上下文补全。
@@ -164,7 +165,7 @@ def _analyze_minimax(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return rows
 
 
-def _analyze_ark(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Doubao-Seed-2.1 on Ark, tried in the configured pro/turbo/lite order."""
     global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
     labels = [str(frame.get("id") or "") for frame in frames]
@@ -177,7 +178,7 @@ def _analyze_ark(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         except Exception:
             continue
     errors: list[str] = []
-    for row in ark_text.vision_models():
+    for row in (models if models is not None else _ark_order()):
         try:
             result = ark_text.chat(
                 "",
@@ -205,6 +206,45 @@ def _analyze_ark(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         errors.append(f"{row['short']}: JSON has no frames[]")
     LAST_ERROR = " | ".join(errors)[:400]
     return {}
+
+
+def _ark_order() -> list[dict[str, Any]]:
+    """Cheapest capable model first, unless the operator pins the old order."""
+    rows = ark_text.vision_models()
+    if os.environ.get("ADSTUDIO_VISION_CHEAP_FIRST", "1") != "1":
+        return list(rows)
+    rank = {"lite": 0, "turbo": 1, "pro": 2}
+    return sorted(rows, key=lambda row: rank.get(str(row.get("short") or ""), 9))
+
+
+def _needs_review(item: dict[str, Any]) -> bool:
+    """Frames worth a second look with the stronger model."""
+    unclear = {str(value) for value in item.get("unclear") or []}
+    if unclear & {"product", "on_screen_text"}:
+        return True
+    if str(item.get("product_visibility") or "") in {"主体", "部分遮挡"}:
+        return True
+    product = str(item.get("product") or "").strip()
+    return not product or product in {"未识别商品"}
+
+
+def _escalate(frames: list[dict[str, Any]], rows: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Re-read at most four doubtful frames with the pro model."""
+    global LAST_ESCALATED
+    LAST_ESCALATED = 0
+    if os.environ.get("ADSTUDIO_VISION_ESCALATE", "1") != "1":
+        return rows
+    pro = next((row for row in ark_text.vision_models() if str(row.get("short")) == "pro"), None)
+    if pro is None:
+        return rows
+    flagged = [frame for frame in frames if _needs_review(rows.get(str(frame.get("id"))) or {})][:4]
+    if not flagged:
+        return rows
+    extra = _analyze_ark(flagged, models=[pro])
+    if extra:
+        rows.update(extra)
+        LAST_ESCALATED = len(extra)
+    return rows
 
 
 def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -251,10 +291,11 @@ def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict[str, dict[str, Any]]:
     """Return visual tags keyed by beat id. Empty dict means unavailable."""
-    global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
+    global LAST_ERROR, LAST_PROVIDER, LAST_MODEL, LAST_ESCALATED
     LAST_ERROR = ""
     LAST_PROVIDER = ""
     LAST_MODEL = ""
+    LAST_ESCALATED = 0
     if not frames:
         return {}
     selected = frames[:max_frames]
@@ -277,6 +318,10 @@ def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict
         try:
             rows = _analyze_ark(usable)
             if rows:
+                first_model = LAST_MODEL
+                rows = _escalate(usable, rows)
+                if LAST_ESCALATED:
+                    LAST_MODEL = f"{first_model}+pro"
                 return rows
             if LAST_ERROR:
                 errors.append(LAST_ERROR)

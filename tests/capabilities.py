@@ -61,9 +61,9 @@ def check_text_models() -> None:
     chain = catalog.vision_chain()
     assert [row["id"] for row in chain] == [
         "minimax.m3",
-        "ark.doubao-seed-2.1-pro",
-        "ark.doubao-seed-2.1-turbo",
         "ark.doubao-seed-2.1-lite",
+        "ark.doubao-seed-2.1-turbo",
+        "ark.doubao-seed-2.1-pro",
         "dsh.vision",
         "heuristic",
     ], chain

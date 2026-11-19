@@ -4,9 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .. import catalog, params, store
+from .. import catalog, params, remake_policy, store
 from ..media import ffmpeg
 from . import persona as persona_mod
+from . import remake_spec
 from ..providers.ark import ArkProvider
 from ..providers.kling import KlingProvider
 from ..providers.minimax import MiniMaxProvider
@@ -29,7 +30,11 @@ def _adapter(model_id: str) -> Any | None:
 def resolve_model(run: Any) -> str:
     """The model id this run should use: explicit when valid, else capability-first."""
     selection = getattr(run, "selection", None) or {}
-    if selection.get("mode") in {"h3_reference", "reference_fallback", "generation_fallback"} and selection.get("model"):
+    if selection.get("mode") in {
+        "h3_reference", "reference", "keyframe", "generation",
+        # legacy selections written before the rung rename
+        "reference_fallback", "generation_fallback",
+    } and selection.get("model"):
         return str(selection["model"])
     requested = str((run.advanced or {}).get("model") or "auto")
     if requested not in {"", "auto"}:
@@ -80,7 +85,7 @@ def _segment_prompt(run: Any, script: dict[str, Any], seg: dict[str, Any]) -> st
     cast = _cast_text(advanced)
     duration = max(0.5, float(seg.get("end_s") or 0) - float(seg.get("start_s") or 0))
     parts = [
-        f"竖屏 {advanced.get('aspect', '9:16')}，约 {duration:.1f} 秒，单个镜头，画面干净，自然光。",
+        f"{remake_spec.orientation(str(advanced.get('aspect') or '9:16'))} {advanced.get('aspect', '9:16')}，约 {duration:.1f} 秒，单个镜头，画面干净，自然光。",
         f"人物：{cast}。" if cast else "",
         persona_mod.persona_instruction(advanced),
         f"场景/动作：{persona_mod.neutralize_people(shot, advanced)}。" if shot else "",
@@ -106,7 +111,7 @@ def _script_prompt(run: Any, script: dict[str, Any]) -> str:
     cast = _cast_text(advanced)
     is_dialogue = run.scenario == "viral-remake"
     parts = [
-        f"竖屏 {advanced.get('aspect', '9:16')}，约 {advanced.get('duration', 12)} 秒，一镜到底，画面干净，自然光。",
+        f"{remake_spec.orientation(str(advanced.get('aspect') or '9:16'))} {advanced.get('aspect', '9:16')}，约 {advanced.get('duration', 12)} 秒，一镜到底，画面干净，自然光。",
         f"人物：{cast}。" if cast else "",
         persona_mod.persona_instruction(advanced),
         f"场景/动作：{'；'.join(persona_mod.neutralize_people(x, advanced) for x in actions[:4])}。" if actions else "",
@@ -163,6 +168,22 @@ def _persona_images(run: Any) -> list[Path]:
         except Exception:
             continue
     return paths[:3]
+
+
+def _keyframe_image(run: Any, skeleton: dict[str, Any], run_id: str) -> Path | None:
+    """First frame of the first shot, used by the keyframe rung."""
+    ref_id = (run.inputs or {}).get("reference_asset_id")
+    if not ref_id:
+        return None
+    shots = (skeleton.get("remake_plan") or {}).get("shots") or []
+    start = float((shots[0] or {}).get("start_s") or 0) if shots else 0.0
+    target = store.run_artifact(run_id, "keyframe.jpg")
+    try:
+        source = store.asset_media_path(str(ref_id))
+        ffmpeg.extract_frame(source, max(0.0, start + 0.05), target, width=720)
+    except Exception:
+        return None
+    return target
 
 
 def _reference_images(run: Any) -> list[Path]:
@@ -296,6 +317,9 @@ def _video_candidates(run: Any) -> list[dict[str, Any]]:
     requested = str((run.advanced or {}).get("model") or "auto")
     preferred = str(selection.get("model") or "") if requested in {"", "auto"} else requested
     rows = catalog.with_capability("text_to_video", kind="video", usable=True)
+    # The full tier is reachable only through the H3 reference path. Calling it
+    # here would burn a paid H3 run without the reference video it needs.
+    rows = [row for row in rows if str((row.get("remake") or {}).get("tier") or "") != "full"]
     ordered: list[dict[str, Any]] = []
     if preferred:
         ordered.extend(row for row in rows if row.get("id") == preferred)
@@ -303,14 +327,52 @@ def _video_candidates(run: Any) -> list[dict[str, Any]]:
     return ordered
 
 
+def _generation_prompt(run: Any, script: dict[str, Any], skeleton: dict[str, Any], selection: dict[str, Any]) -> str:
+    """Prompt for a model that does not receive the reference video.
+
+    A saved `inputs.prompt_override` always wins so the operator can inspect and
+    edit the rendered prompt before spending a generation call.
+    """
+    override = str((run.inputs or {}).get("prompt_override") or "").strip()
+    if override:
+        return override[:4000]
+    if run.scenario != "viral-remake":
+        return _script_prompt(run, script)
+    spec = remake_spec.build_spec(run, skeleton, script)
+    mode = str(selection.get("mode") or "generation")
+    if mode == "keyframe":
+        return remake_spec.render_generation(spec, anchor=True)
+    if mode == "reference":
+        return remake_spec.render_reference(spec)
+    return remake_spec.render_generation(spec)
+
+
 def generate(run_id: str) -> dict[str, Any]:
     run = store.read_run(run_id)
     if run is None:
         raise FileNotFoundError(run_id)
-    if (getattr(run, "selection", None) or {}).get("mode") == "h3_reference":
-        return generate_h3_reference(run_id)
-    advanced = params.merged_advanced(run.advanced)
     selection = getattr(run, "selection", None) or {}
+    attempts: list[dict[str, Any]] = []
+    if selection.get("mode") == "h3_reference":
+        try:
+            generated_h3 = generate_h3_reference(run_id)
+            generated_h3["attempts"] = []
+            generated_h3["warnings"] = list(generated_h3.get("warnings") or [])
+            return generated_h3
+        except Exception as exc:  # noqa: BLE001
+            # A failed H3 run must not fail the whole run while a weaker but
+            # usable rung exists. Step one rung down inside the same run and
+            # keep the failure in `history` so the UI can explain it.
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            run = store.read_run(run_id) or run
+            degraded = remake_policy.degrade(run, selection, reason=error)
+            run.selection = degraded
+            store.write_run(run)
+            attempts.append({"rung": "full", "model": "minimax.h3", "status": "failed", "error": error})
+            if degraded.get("mode") == "analysis_only":
+                raise RuntimeError(f"完整复刻失败，且没有可降级的视频模型：{error}") from exc
+            selection = degraded
+    advanced = params.merged_advanced(run.advanced)
     selected_duration = (selection.get("params") or {}).get("duration")
     duration = max(1.0, float(selected_duration or advanced.get("duration") or 12))
     width, height = params.size_for(str(advanced.get("aspect") or "9:16"), str(advanced.get("resolution") or "720p"))
@@ -318,11 +380,19 @@ def generate(run_id: str) -> dict[str, Any]:
     source = store.asset_media_path(ref_id) if ref_id else None
     result_path = store.run_artifact(run_id, "provider_raw.mp4")
     script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
-    prompt = _script_prompt(run, script)
+    skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
+    prompt = _generation_prompt(run, script, skeleton, selection)
+    images = _reference_images(run)
+    if str(selection.get("mode") or "") == "keyframe":
+        anchor = _keyframe_image(run, skeleton, run_id)
+        if anchor is not None:
+            # Keyframe adapters take exactly one image; the anchor wins over
+            # product references, which is why the policy skips this rung for
+            # product replacement.
+            images = [anchor]
     candidates = _video_candidates(run)
     if not candidates:
         raise RuntimeError("没有可用的视频模型：请在设置里启用对应厂商 key")
-    attempts: list[dict[str, Any]] = []
     skipped_providers: set[str] = set()
     for model in candidates:
         model_id = str(model.get("id") or "")
@@ -339,7 +409,7 @@ def generate(run_id: str) -> dict[str, Any]:
             else:
                 provider.generate(
                     prompt,
-                    images=_reference_images(run),
+                    images=images,
                     duration=int(duration),
                     resolution=str(advanced.get("resolution") or "720p"),
                     aspect=str(advanced.get("aspect") or "9:16"),
@@ -348,7 +418,10 @@ def generate(run_id: str) -> dict[str, Any]:
                 )
                 generated = {"model": model_id, "path": str(result_path), "demo": False, "duration_s": duration}
             generated["attempts"] = attempts
-            generated["warnings"] = [f"已切换到 {model_id}"] if attempts else []
+            warnings = [f"已切换到 {model_id}"] if attempts else []
+            if attempts and attempts[0].get("rung") == "full":
+                warnings.insert(0, f"完整复刻失败，已降级为按拆解生成：{str(attempts[0].get('error') or '')[:160]}")
+            generated["warnings"] = warnings
             run = store.read_run(run_id) or run
             run.advanced["model"] = model_id
             if selection:

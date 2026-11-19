@@ -21,9 +21,21 @@ The engine is new code under `src/adclip/`. It does not import `adplus`,
 exercised without paid credentials. Real provider adapters are the next step.
 
 Model capabilities and call parameters live in `capabilities.py`; `catalog.py`
-remains the row source. Viral remakes are auto-selected (H3 full, then Seedance
-fallback) and never ask the operator for a model. The plugin registers DSH
-tools against the same engine, so the UI and the agent share one implementation.
+remains the row source. `catalog.remake_chain()` is the single remake ladder
+(`full → reference → keyframe → generation`) and `remake_policy.py` owns
+eligibility and degradation, so the UI, the DSH tools and the pipeline all report
+the same decision. Viral remakes are auto-selected and never ask the operator for
+a model.
+
+Reference analysis separates **shots** from **motion**. `ffmpeg.detect_events()`
+grades scene scores: a real cut spikes above 0.30 and settles, while camera pans,
+hands and product reveals stay below it and are recorded as `motion`. A
+single-take reference therefore stays one beat (and one shot) instead of being
+split into fake cuts; dialogue pauses can add pacing beats when ASR is available.
+Keyframes are sampled per beat as first + last + motion peaks, deduplicated with
+a difference hash, and the transcript keeps per-line timestamps so the remake
+prompt can speak in time. The plugin registers DSH tools against the same engine,
+so the UI and the agent share one implementation.
 
 Post production normalizes the clip and decides subtitles from the run's own
 setting: `advanced.subtitle = "off"` (default) delivers no SRT at all, while

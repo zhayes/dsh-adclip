@@ -115,7 +115,7 @@ def main() -> None:
         run = poll(client, res.json()["run"]["id"])
         assert run["status"] == "succeeded", run.get("error")
         assert run["result"]["video"].endswith("final.mp4")
-        assert run.get("selection", {}).get("mode") == "generation_fallback", run.get("selection")
+        assert run.get("selection", {}).get("mode") in {"generation", "generation_fallback"}, run.get("selection")
         capabilities = client.get("/capabilities")
         assert capabilities.status_code == 200, capabilities.text
         assert any(row["id"] == "minimax.h3" and row["remake"]["tier"] == "full" for row in capabilities.json()["models"])
@@ -123,6 +123,23 @@ def main() -> None:
         assert analysis.status_code == 200, analysis.text
         assert analysis.json()["available"] is True
         assert analysis.json()["analysis"]["mode"] in {"heuristic", "frames"}
+        asr = client.get("/asr/status")
+        assert asr.status_code == 200, asr.text
+        assert "available" in asr.json(), asr.text
+        transcript = client.post("/transcribe", json={"run_id": run["id"]})
+        assert transcript.status_code == 200, transcript.text
+        assert transcript.json()["lines"] == [] or transcript.json()["available"], transcript.text
+        prompt = client.get(f"/runs/{run['id']}/prompt")
+        assert prompt.status_code == 200, prompt.text
+        assert prompt.json()["text"] and prompt.json()["chars"] > 0, prompt.text
+        saved = client.post(f"/runs/{run['id']}/prompt-override", json={"text": "测试提示词"})
+        assert saved.status_code == 200, saved.text
+        assert client.get(f"/runs/{run['id']}/prompt").json()["text"] == "测试提示词"
+        report = run["result"].get("qa") or {}
+        score = report.get("remake_score") or {}
+        assert score.get("threshold") == 45, report
+        assert isinstance(report.get("requirement_check"), list), report
+        assert report.get("asr_available") is False, report
         params = client.get("/settings/model_params")
         assert params.status_code == 200
         saved = client.post("/settings/model_params", json={"model_id": "minimax.h3", "values": {"resolution": "2K"}})

@@ -97,10 +97,10 @@ VIDEO_ROWS: list[dict[str, Any]] = [
         "label": "Kling v3（可灵）",
         "capabilities": ["text_to_video", "image_to_video", "reference_to_video"],
         "native_audio": True,
-        "durations": [3, 5, 8, 10, 12, 15],
+        "durations": [5, 10],
         "resolutions": ["720p", "1080p"],
         "aspects": ["9:16", "16:9", "1:1"],
-        "max_duration_s": 15,
+        "max_duration_s": 10,
         "requires": ["KLING_API_KEY"],
         "adapter_ready": True,
         "tags": ["1080p 候选", "原生音频"],
@@ -361,6 +361,14 @@ def _dsh_vision_ready() -> bool:
     return bool(chat and chat.endswith("/chat"))
 
 
+def _vision_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cheap-first when enabled: lite labels everything, pro reviews doubts."""
+    if os.environ.get("ADSTUDIO_VISION_CHEAP_FIRST", "1") != "1":
+        return list(rows)
+    rank = {"lite": 0, "turbo": 1, "pro": 2}
+    return sorted(rows, key=lambda row: rank.get(str(row.get("id") or "").rsplit("-", 1)[-1], 9))
+
+
 def vision_chain() -> list[dict[str, Any]]:
     """The fallback ladder the engine and DSH tools report.
 
@@ -376,7 +384,7 @@ def vision_chain() -> list[dict[str, Any]]:
         "available": minimax_key,
         "reason": "" if minimax_key else "未配置 MINIMAX_API_KEY",
     }]
-    for row in text_rows():
+    for row in _vision_order(text_rows()):
         chain.append({
             "id": row["id"],
             "label": row["label"],
@@ -403,4 +411,104 @@ def vision_chain() -> list[dict[str, Any]]:
         "available": True,
         "reason": "",
     })
+    return chain
+
+
+REMAKE_RUNGS: tuple[tuple[str, str, str], ...] = (
+    ("full", "h3_reference", "完整复刻（参考视频直传）"),
+    ("reference", "reference", "参考复刻（参考视频直传）"),
+    ("keyframe", "keyframe", "关键帧锚定"),
+    ("generation", "generation", "按拆解生成"),
+)
+
+
+def _remake_rank(row: dict[str, Any]) -> tuple[float, int, str]:
+    remake = row.get("remake") or {}
+    return (
+        float(remake.get("cost_weight") or 1.0),
+        -int(remake.get("priority") or 0),
+        str(row.get("id") or ""),
+    )
+
+
+def _remake_candidates(rung: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows that can honestly serve one rung.
+
+    The two direct-video rungs need `remake.reference_video_ready`: a model that
+    cannot receive the reference video may only be used as a generation model,
+    so a `reference` tier row without the flag falls through to generation.
+    The keyframe rung needs a first-frame capable adapter *and* native audio,
+    because a silent first-frame model cannot carry a talking ad.
+    """
+    out = []
+    for row in rows:
+        remake = row.get("remake") or {}
+        tier = str(remake.get("tier") or "")
+        ready = bool(remake.get("reference_video_ready"))
+        if rung == "full" and tier == "full" and ready:
+            out.append(row)
+        elif rung == "reference" and tier == "reference" and ready:
+            out.append(row)
+        elif rung == "keyframe" and remake.get("keyframe_ready") and row.get("native_audio"):
+            out.append(row)
+        elif rung == "generation" and (tier == "generation" or (tier == "reference" and not ready)):
+            out.append(row)
+    return sorted(out, key=_remake_rank)
+
+
+def remake_chain() -> list[dict[str, Any]]:
+    """Ordered remake ladder, shaped like `vision_chain()`.
+
+    One entry per rung, carrying the model the policy would pick. `available`
+    is false when no row in the rung can be used: no key, disabled, or an
+    adapter that cannot send what the rung promises.
+    """
+    rows = for_kind("video")
+    if test_mode():
+        # Test mode must never reach a paid provider. The legacy data dir is
+        # migrated into the temp one on startup, so real keys and preference
+        # files can be present; force the synthetic row and keep it enabled.
+        synthetic = [row for row in rows if row.get("provider") == "synthetic"]
+        if synthetic:
+            rows = [{**row, "available": True, "enabled": True} for row in synthetic]
+    chain: list[dict[str, Any]] = []
+    for rung, mode, label in REMAKE_RUNGS:
+        candidates = _remake_candidates(rung, rows)
+        usable = [row for row in candidates if row.get("available") and row.get("enabled", True)]
+        pick = (usable or candidates or [None])[0]
+        if pick is None:
+            tier_rows = [row for row in rows if str((row.get("remake") or {}).get("tier") or "") == rung]
+            if rung == "keyframe":
+                reason = "没有可用的首帧锚定模型（需要支持首帧且带原生音频）"
+            elif rung in {"full", "reference"} and tier_rows:
+                reason = "参考直传暂不启用：需要公网素材托管（当前用 H3 文件上传代替）"
+            else:
+                reason = "没有可用的模型"
+            chain.append({
+                "rung": rung, "mode": mode, "tier": rung, "label": label,
+                "id": "", "model": "", "provider": "", "model_label": "",
+                "durations": [], "params": {},
+                "available": False, "enabled": False,
+                "reason": reason,
+            })
+            continue
+        available = bool(pick.get("available")) and bool(pick.get("enabled", True))
+        reason = ""
+        if not available:
+            reason = str(pick.get("reason") or "模型不可用")
+        chain.append({
+            "rung": rung,
+            "mode": mode,
+            "tier": rung,
+            "label": label,
+            "id": str(pick.get("id") or ""),
+            "model": str(pick.get("id") or ""),
+            "provider": str(pick.get("provider") or ""),
+            "model_label": str(pick.get("label") or pick.get("id") or ""),
+            "durations": list(pick.get("durations") or []),
+            "params": dict((pick.get("remake") or {}).get("params") or {}),
+            "available": available,
+            "enabled": bool(pick.get("enabled", True)),
+            "reason": reason,
+        })
     return chain

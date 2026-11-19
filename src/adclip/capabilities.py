@@ -77,6 +77,9 @@ def _video_params(
 SEEDANCE_IO = _video_io()
 
 
+# `remake.reference_video_ready` says whether the adapter can actually send the
+# reference video to that model. A `reference` tier row without it is only
+# usable as a plain generation model, and the rung is skipped with a reason.
 SPECS: dict[str, dict[str, Any]] = {
     "minimax.h3": {
         "io": _video_io(),
@@ -100,6 +103,7 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "allowed",
             "priority": 100,
             "cost_weight": 0.35,
+            "reference_video_ready": True,
         },
         "quality": {"structure": 0.95, "identity": 0.9, "product": 0.9},
         "default_params": {"resolution": "768P", "duration": "reference", "audio": "preserve"},
@@ -114,6 +118,7 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "restricted",
             "priority": 90,
             "cost_weight": 0.6,
+            "reference_video_ready": False,
         },
         "quality": {"structure": 0.85, "identity": 0.8, "product": 0.8},
         "default_params": {"resolution": "720p", "generate_audio": True, "watermark": False},
@@ -133,6 +138,7 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "restricted",
             "priority": 80,
             "cost_weight": 0.7,
+            "reference_video_ready": False,
         },
         "quality": {"structure": 0.85, "identity": 0.8, "product": 0.8},
         "default_params": {"resolution": "1080p", "generate_audio": True, "watermark": False},
@@ -177,7 +183,7 @@ SPECS: dict[str, dict[str, Any]] = {
     },
     "kling.v3": {
         "io": _video_io(),
-        "params": _video_params(duration_max=15, resolutions=["720p", "1080p"], default_resolution="1080p"),
+        "params": _video_params(duration_max=10, resolutions=["720p", "1080p"], default_resolution="1080p"),
         "output": {"video": True, "audio": True},
         "remake": {
             "tier": "reference",
@@ -185,6 +191,8 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "unknown",
             "priority": 70,
             "cost_weight": 0.6,
+            "reference_video_ready": False,
+            "keyframe_ready": True,
         },
         "quality": {"structure": 0.8, "identity": 0.78, "product": 0.78},
         "default_params": {"resolution": "1080p"},
@@ -205,6 +213,7 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "unknown",
             "priority": 20,
             "cost_weight": 0.3,
+            "keyframe_ready": True,
         },
         "quality": {"structure": 0.5, "identity": 0.5, "product": 0.5},
         "default_params": {"resolution": "768P", "duration": 6},
@@ -377,6 +386,7 @@ def manifest(
     *,
     text_models: list[dict[str, Any]] | None = None,
     vision_chain: list[dict[str, Any]] | None = None,
+    remake_chain: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Machine-readable capability manifest for Settings and DSH tools.
 
@@ -419,13 +429,27 @@ def manifest(
             "reason": row.get("reason") or "",
             "checked_at": row.get("checked_at") or "",
         } for row in text_models]
+    scheduling: dict[str, Any] = {}
     if vision_chain is not None:
-        payload["scheduling"] = {"vision": [{
+        scheduling["vision"] = [{
             "id": row.get("id"),
             "label": row.get("label"),
             "provider": row.get("provider"),
             "available": bool(row.get("available")),
             "reason": row.get("reason") or "",
             "status": row.get("status") or "",
-        } for row in vision_chain]}
+        } for row in vision_chain]
+    if remake_chain is not None:
+        scheduling["remake"] = [{
+            "rung": row.get("rung"),
+            "mode": row.get("mode"),
+            "label": row.get("label"),
+            "model": row.get("model") or "",
+            "model_label": row.get("model_label") or "",
+            "provider": row.get("provider") or "",
+            "available": bool(row.get("available")),
+            "reason": row.get("reason") or "",
+        } for row in remake_chain]
+    if scheduling:
+        payload["scheduling"] = scheduling
     return payload

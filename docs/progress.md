@@ -1,5 +1,26 @@
 # Progress / handoff
 
+## 台词时长 / 同音字校对 / 画面文字检查
+
+- **台词时长**：`pipeline/timing.py` 现在是唯一口径。`char_budget()` 给出一个 beat
+  能念完的字数（自然语速 4 字/秒，上限 5.5 字/秒，1.2 倍宽限），`fit_lines()`
+  超预算时**按比例缩短每一句而不是丢掉整句**（价格句/收口句不会再被静默删掉），
+  `schedule()` 把最后一句结束点提前 `TAIL_S`，保证切镜头时不切断字尾，
+  `overflow()` 供 QA 判断。`script.build_script` 的提示词直接给模型每个 beat 的字数上限，
+  `rewrite_shot` 同样按上限收紧。
+- **同音字校对**（`media/asr.py::refine`）：不是写死模型——先用 DSH 当前默认文本模型，
+  再降级 Ark lite → turbo → pro。真正的失败原因是 `max_tokens=1200` 被推理模型的
+  思考过程吃光，桥返回空文本，校正静默降级。现在默认 3000
+  （`ADSTUDIO_ASR_CLEANUP_MAX_TOKENS`），`llm._chat_dsh` 遇到空文本会用更大预算重试一次，
+  并且失败会写进 `analysis.asr.cleanup/error` 与 warnings，不再静默。
+- **画面文字 / 水印**：`ark` 的 `watermark: false` 一直生效（实测输出没有平台水印）。
+  提示词里不再点名“水印/logo”，避免把词面量渲进画面；真正兜底的是 QA 新增
+  `text_overlay`：抽样两帧走视觉链，检测到叠加文字（例如模型自绘字幕、商品标签）就 warn。
+- **QA `dialogue_timing`**：用渲染器同样的 `timed_lines` 校验每句槽位是否够念完，
+  并给出整体 cps。
+- **分镜 UI**：台词不再被 `-webkit-line-clamp:2` 截断，按行显示并带每句起止时间
+  （`storyboard.json` 的 `segments[].lines`）。
+
 ## Implemented in this slice
 
 - Doubao-Seed-2.1（方舟 pro/turbo/lite）接入文本与视觉：`providers/ark_text.py`、

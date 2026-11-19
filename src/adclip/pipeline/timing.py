@@ -1,0 +1,130 @@
+"""Speech timing rules shared by the script writer and the prompt renderer.
+
+Four Chinese characters per second is the pace of a natural ad read. A model
+speaks comfortably up to about five and a half, so a slot that only fits at
+that faster pace is still allowed. Beyond that the line is physically
+impossible: the clip ends before the sentence does, which is exactly the
+failure this module exists to prevent.
+
+The last line always ends a moment before the shot does, so a cut never clips
+the tail of a word.
+"""
+from __future__ import annotations
+
+DEFAULT_CPS = 4.0
+MAX_CPS = 5.5
+GRACE = 1.2
+MIN_LINE_S = 0.7
+LINE_GAP_S = 0.2
+TAIL_S = 0.25
+MIN_LINE_CHARS = 4
+_PUNCT = "，。！？、；：,.!?;:"
+
+
+def speak_seconds(text: str, cps: float = DEFAULT_CPS) -> float:
+    """Minimum time needed to say `text` at a natural pace."""
+    return max(MIN_LINE_S, len(str(text or "")) / max(0.5, cps))
+
+
+def char_budget(seconds: float, cps: float = DEFAULT_CPS) -> int:
+    """How many characters fit in `seconds`."""
+    return max(MIN_LINE_CHARS, int(max(0.5, seconds) * max(0.5, cps)))
+
+
+def _cut(text: str, limit: int) -> str:
+    """Take a speakable prefix, preferring to stop on punctuation."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    floor = max(1, int(limit * 0.6))
+    for index in range(len(head) - 1, floor - 1, -1):
+        if head[index] in _PUNCT:
+            return head[:index].rstrip(_PUNCT + " 　")
+    return head.rstrip(_PUNCT + " 　")
+
+
+def fit_lines(lines: list[str], seconds: float, *, cps: float = MAX_CPS) -> tuple[list[str], bool]:
+    """Shorten a beat's lines so every one can be spoken inside `seconds`.
+
+    Returns `(kept_lines, trimmed)`. Lines are never dropped: each gets a share
+    of the budget proportional to its own length, so the price line and the
+    punchline survive instead of quietly disappearing from the prompt.
+    """
+    texts = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    if not texts:
+        return [], False
+    budget = char_budget(seconds, cps)
+    total = sum(len(text) for text in texts)
+    # A line a hair over budget still reads better whole: the speaker only has
+    # to push the pace slightly. Only a clearly impossible line is cut.
+    if total <= budget * GRACE:
+        return texts, False
+    if len(texts) == 1:
+        return [_cut(texts[0], budget)], True
+    shares = [max(MIN_LINE_CHARS, int(budget * len(text) / total)) for text in texts]
+    while sum(shares) > budget:
+        index = max(range(len(shares)), key=lambda i: shares[i])
+        if shares[index] <= MIN_LINE_CHARS:
+            break
+        shares[index] -= 1
+    kept = [_cut(text, share) for text, share in zip(texts, shares)]
+    return [line for line in kept if line], True
+
+
+def overflow(lines: list[str], start: float, end: float, *, cps: float = MAX_CPS) -> bool:
+    """True when the lines cannot be said inside `start`–`end`, even fast."""
+    texts = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    if not texts:
+        return False
+    span = max(0.0, float(end) - float(start) - TAIL_S)
+    return sum(len(text) for text in texts) > char_budget(span, cps)
+
+
+def schedule(
+    lines: list[str],
+    start: float,
+    end: float,
+    *,
+    cps: float = DEFAULT_CPS,
+    gap: float = LINE_GAP_S,
+) -> list[dict[str, float | str]]:
+    """Place lines inside one shot.
+
+    Proportional to character count, never shorter than `speak_seconds`, and the
+    last line always ends at least `TAIL_S` before the shot does.
+    """
+    texts = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    if not texts:
+        return []
+    span = max(0.5, float(end) - float(start))
+    usable = max(0.5, span - TAIL_S)
+    needed = [speak_seconds(text, cps) for text in texts]
+    fast = [speak_seconds(text, MAX_CPS) for text in texts]
+    gap_total = gap * max(0, len(texts) - 1)
+    if sum(needed) + gap_total <= usable:
+        # Comfortable: natural pace plus a pause, with the slack spread out.
+        room = usable - sum(needed) - gap_total
+        total_chars = sum(len(text) for text in texts) or 1
+        durations = [need + room * len(text) / total_chars for text, need in zip(texts, needed)]
+        return _layout(texts, durations, start, gap)
+    if sum(fast) + gap_total <= usable:
+        # Tight but speakable: raise the pace, drop the pauses.
+        room = usable - sum(fast)
+        total_chars = sum(len(text) for text in texts) or 1
+        durations = [need + room * len(text) / total_chars for text, need in zip(texts, fast)]
+        return _layout(texts, durations, start, 0.0)
+    # Truly impossible slot: share it by characters and let the caller report
+    # the overflow (QA does) instead of silently giving one line no time at all.
+    total_chars = sum(len(text) for text in texts) or 1
+    durations = [usable * len(text) / total_chars for text in texts]
+    return _layout(texts, durations, start, 0.0)
+
+
+def _layout(texts: list[str], durations: list[float], start: float, gap: float) -> list[dict[str, float | str]]:
+    rows: list[dict[str, float | str]] = []
+    cursor = float(start)
+    for text, duration in zip(texts, durations):
+        end_at = cursor + max(0.2, float(duration))
+        rows.append({"start_s": round(cursor, 3), "end_s": round(end_at, 3), "text": text})
+        cursor = end_at + gap
+    return rows

@@ -1,26 +1,46 @@
 """Reference analysis: probe, cut detection, beat grid, storyboard thumbnails."""
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
 from pathlib import Path
 from typing import Any
 
-from .. import store
-from ..media import asr, ffmpeg, vision
+from .. import analysis_cache, store
+from ..media import asr, ffmpeg, similarity, vision
 
 
-def _beats(duration: float, cuts: list[float]) -> list[dict[str, Any]]:
+def _dialogue_gaps(transcript: list[dict[str, Any]], *, min_gap: float = 0.6) -> list[float]:
+    """Midpoints of real pauses in the transcript."""
+    rows: list[tuple[float, float]] = []
+    for item in transcript:
+        try:
+            start = float(item.get("start_s") or 0)
+            end = float(item.get("end_s") or 0)
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        rows.append((start, end))
+    rows.sort()
+    gaps: list[float] = []
+    previous_end = 0.0
+    for start, end in rows:
+        if start - previous_end >= min_gap:
+            gaps.append(round((previous_end + start) / 2, 3))
+        previous_end = max(previous_end, end)
+    return gaps
+
+
+def _beats(duration: float, cuts: list[float], *, transcript: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Beat grid from validated cuts, refined by dialogue pauses.
+
+    A single-take reference stays one beat unless the transcript has a real
+    pause to split on: camera movement is not a shot boundary.
+    """
     points = [0.0] + [round(c, 3) for c in cuts if 0.4 < c < duration - 0.4] + [round(duration, 3)]
-    if len(points) <= 2:
-        step = max(2.0, duration / 4.0)
-        points = [0.0]
-        t = step
-        while t < duration - 1.0:
-            points.append(round(t, 3))
-            t += step
-        points.append(round(duration, 3))
     # merge tiny beats into the next one
     merged: list[float] = [points[0]]
     for value in points[1:]:
@@ -29,8 +49,16 @@ def _beats(duration: float, cuts: list[float]) -> list[dict[str, Any]]:
         merged.append(value)
     if merged[-1] != points[-1]:
         merged.append(points[-1])
-    # cap at 6 readable beats
-    while len(merged) > 7:
+    if len(merged) <= 2 and transcript:
+        for gap in _dialogue_gaps(transcript):
+            if not (0.8 < gap < duration - 0.8):
+                continue
+            if min(abs(gap - point) for point in merged) < 1.2:
+                continue
+            merged.append(gap)
+        merged = sorted(set(merged))
+    # cap at 8 readable beats
+    while len(merged) > 9:
         idx = min(range(1, len(merged) - 1), key=lambda i: merged[i] - merged[i - 1])
         del merged[idx]
     functions = ["hook", "setup", "escalation", "insult", "cta", "punchline", "beat"]
@@ -49,6 +77,7 @@ def _beats(duration: float, cuts: list[float]) -> list[dict[str, Any]]:
                 "function_source": "heuristic",
                 "confidence": 0.55,
                 "dialogue": [],
+                "dialogue_rows": [],
                 "visual": {"action": "", "shot_size": "中景", "product": {}},
             }
         )
@@ -56,30 +85,86 @@ def _beats(duration: float, cuts: list[float]) -> list[dict[str, Any]]:
 
 
 def _assign_transcript(beats: list[dict[str, Any]], transcript: list[dict[str, Any]]) -> None:
-    """Assign each ASR line to the beat with the largest temporal overlap.
+    """Attach every ASR line to the beat with the largest temporal overlap.
 
-    The old all-overlaps assignment duplicated boundary lines into both
-    neighbours. One line belongs to one beat; a weak overlap is dropped.
+    No line is dropped. A line longer than its beat still belongs to the beat
+    with the most overlap and is flagged `crosses_boundary`, so the dialogue
+    timeline stays complete even when beats and speech disagree.
     """
     for beat in beats:
         beat["dialogue"] = []
-        beat["dialogue_source"] = "asr"
+        beat["dialogue_rows"] = []
     for item in transcript:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
         try:
             start = float(item.get("start_s") or 0)
             end = float(item.get("end_s") or 0)
         except (TypeError, ValueError):
             continue
-        if end <= start:
-            continue
+        if end < start:
+            end = start
         best = None
         best_overlap = 0.0
         for beat in beats:
             overlap = max(0.0, min(end, float(beat["end_s"])) - max(start, float(beat["start_s"])))
             if overlap > best_overlap:
                 best, best_overlap = beat, overlap
-        if best is not None and best_overlap >= max(0.15, 0.2 * (end - start)):
-            best["dialogue"].append(str(item.get("text") or "").strip())
+        if best is None:
+            # The line sits in a gap with no overlap; attach it to the nearest beat.
+            middle = (start + end) / 2
+            best = min(
+                beats,
+                key=lambda beat: abs((float(beat["start_s"]) + float(beat["end_s"])) / 2 - middle),
+            )
+        best["dialogue_rows"].append({
+            "start_s": round(start, 3),
+            "end_s": round(end, 3),
+            "text": text,
+            "crosses_boundary": bool(
+                start < float(best["start_s"]) - 0.05 or end > float(best["end_s"]) + 0.05
+            ),
+        })
+        best["dialogue"].append(text)
+
+
+def _snap_beats(beats: list[dict[str, Any]], *, window: float = 0.35, minimum: float = 0.4) -> None:
+    """Move beat boundaries into a nearby dialogue gap.
+
+    The ASR timeline is the clock: a beat boundary 0.3s before a line ends cuts
+    the sentence in half. Nudging the boundary into the gap keeps sentence and
+    shot aligned without dropping any line.
+    """
+    for index in range(1, len(beats)):
+        previous, current = beats[index - 1], beats[index]
+        boundary = float(current["start_s"])
+        span_start, span_end = float(previous["start_s"]), float(current["end_s"])
+        candidates: list[float] = []
+        for beat in (previous, current):
+            for row in beat.get("dialogue_rows") or []:
+                candidates.extend((float(row["start_s"]), float(row["end_s"])))
+        best = None
+        for value in candidates:
+            if abs(value - boundary) > window:
+                continue
+            if value - span_start < minimum or span_end - value < minimum:
+                continue
+            if best is None or abs(value - boundary) < abs(best - boundary):
+                best = value
+        if best is None:
+            continue
+        boundary = round(best, 3)
+        previous["end_s"] = boundary
+        current["start_s"] = boundary
+        previous["len_s"] = round(boundary - span_start, 2)
+        current["len_s"] = round(span_end - boundary, 2)
+    for beat in beats:
+        for row in beat.get("dialogue_rows") or []:
+            row["crosses_boundary"] = bool(
+                float(row["start_s"]) < float(beat["start_s"]) - 0.05
+                or float(row["end_s"]) > float(beat["end_s"]) + 0.05
+            )
 
 
 def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +198,8 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
                 "position": "",
             },
             "dialogue": list(beat.get("dialogue") or []),
+            "dialogue_rows": list(beat.get("dialogue_rows") or []),
+            "dialogue_source": str(beat.get("dialogue_source") or ""),
             "on_screen_text": str(view.get("on_screen_text") or ""),
             "transition_in": "cut" if index else "start",
             "preserve": ["镜头", "景别", "运镜", "场景", "动作", "构图", "节奏", "转场", "原声"],
@@ -137,10 +224,10 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
 
 def _vision_max_frames() -> int:
     try:
-        maximum = int(os.environ.get("ADSTUDIO_VISION_MAX_FRAMES", "12"))
+        maximum = int(os.environ.get("ADSTUDIO_VISION_MAX_FRAMES", "14"))
     except (TypeError, ValueError):
-        maximum = 12
-    return max(4, min(16, maximum))
+        maximum = 14
+    return max(4, min(18, maximum))
 
 
 def _vision_budget(duration: float) -> int:
@@ -154,10 +241,39 @@ def _vision_budget(duration: float) -> int:
     return max(minimum, min(maximum, target))
 
 
-def _frame_times(start: float, end: float, count: int) -> list[float]:
-    count = max(1, int(count))
+def _frame_times_for(start: float, end: float, count: int, peaks: list[float]) -> list[tuple[float, str]]:
+    """First frame, last frame, then motion peaks, then even fill.
+
+    First/last pin the action interval; peaks spend the remaining budget where
+    something actually changed instead of at arbitrary midpoints.
+    """
     span = max(0.0, float(end) - float(start))
-    return [round(float(start) + span * (index + 0.5) / count, 3) for index in range(count)]
+    if count <= 1 or span <= 0.4:
+        return [(round(float(start) + span / 2, 3), "mid")]
+    head = min(0.3, span * 0.1)
+    picks: list[tuple[float, str]] = [
+        (round(float(start) + head, 3), "first"),
+        (round(float(end) - head, 3), "last"),
+    ]
+    interior = count - 2
+    if interior > 0:
+        inside = sorted(value for value in peaks if float(start) + 0.15 < value < float(end) - 0.15)
+        step = span / (interior + 1)
+        for index in range(interior):
+            target = float(start) + step * (index + 1)
+            if inside:
+                pick = min(inside, key=lambda value: abs(value - target))
+                inside.remove(pick)
+                picks.append((round(pick, 3), "peak"))
+            else:
+                picks.append((round(target, 3), "mid"))
+    picks.sort()
+    unique: list[tuple[float, str]] = []
+    for time_s, role in picks:
+        if unique and abs(time_s - unique[-1][0]) < 0.15:
+            continue
+        unique.append((time_s, role))
+    return unique
 
 
 def _plan_analysis_frames(
@@ -167,42 +283,67 @@ def _plan_analysis_frames(
     duration: float,
     *,
     max_frames: int | None = None,
+    events: list[dict[str, Any]] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Distribute analysis frames across beats without crossing cut boundaries."""
+    """Budget frames across beats, then dedupe near-identical stills."""
     if not beats:
         return []
     budget = max(1, int(max_frames or _vision_budget(duration)))
+    peaks = [float(event.get("t") or 0) for event in (events or []) if str(event.get("kind")) == "motion"]
     counts = [1 for _ in beats]
-    while sum(counts) < budget:
-        # Put the next frame in the beat with the coarsest current interval.
-        index = max(range(len(beats)), key=lambda i: (float(beats[i]["end_s"]) - float(beats[i]["start_s"])) / counts[i])
-        length = float(beats[index]["end_s"]) - float(beats[index]["start_s"])
-        if length < 0.8 or counts[index] >= max(1, int(math.ceil(length / 1.5))):
-            # All remaining beats are too short or already at their local cap.
-            if all((float(b["end_s"]) - float(b["start_s"])) < 0.8 for b in beats):
+    remaining = max(0, budget - len(beats))
+    order = sorted(
+        range(len(beats)),
+        key=lambda index: -(float(beats[index]["end_s"]) - float(beats[index]["start_s"])),
+    )
+    while remaining > 0:
+        progressed = False
+        for index in order:
+            if remaining <= 0:
                 break
-            # Allow one more pass rather than looping forever.
-            if min((float(beats[i]["end_s"]) - float(beats[i]["start_s"])) / counts[i] for i in range(len(beats))) < 1.0:
-                break
-        counts[index] += 1
+            if counts[index] >= 4:
+                continue
+            counts[index] += 1
+            remaining -= 1
+            progressed = True
+        if not progressed:
+            break
     frames: list[dict[str, Any]] = []
-    for beat_index, (beat, count) in enumerate(zip(beats, counts)):
+    hashes: list[int] = []
+    deduped = 0
+    for beat, count in zip(beats, counts):
         start, end = float(beat["start_s"]), float(beat["end_s"])
-        for frame_index, time_s in enumerate(_frame_times(start, end, count)):
+        for frame_index, (time_s, role) in enumerate(_frame_times_for(start, end, count, peaks)):
             frame_id = f"{beat['id']}_f{frame_index}"
             thumb = store.run_artifact(run_id, f"storyboard/analysis_{frame_id}.jpg")
             try:
                 ffmpeg.extract_frame(source, time_s, thumb, width=360)
             except Exception:
                 continue
+            hashed = similarity.dhash(thumb)
+            if hashed is not None and hashes:
+                closest = max((similarity.similarity(hashed, other) or 0.0) for other in hashes)
+                if closest >= 0.97:
+                    thumb.unlink(missing_ok=True)
+                    deduped += 1
+                    continue
+            if hashed is not None:
+                hashes.append(hashed)
             frames.append({
                 "id": frame_id,
                 "beat_id": beat["id"],
                 "start_s": start,
                 "end_s": end,
                 "time_s": time_s,
+                "role": role,
                 "path": thumb,
             })
+    if stats is not None:
+        stats["budget"] = budget
+        stats["planned"] = sum(counts)
+        stats["used"] = len(frames)
+        stats["deduped"] = deduped
     return frames
 
 
@@ -237,6 +378,46 @@ def _aggregate_visual(
         aggregated[str(beat.get("id"))] = merged
     return aggregated
 
+def _from_cache(run: Any, root: Path, ref_id: str | None, cached: dict[str, Any]) -> dict[str, Any] | None:
+    """Rebuild a skeleton from cached reference facts for a new run."""
+    source = dict(cached.get("source") or {})
+    beats = copy.deepcopy(cached.get("beats") or [])
+    if not source or not beats or not ref_id:
+        return None
+    try:
+        source["path"] = str(store.asset_media_path(ref_id))
+    except FileNotFoundError:
+        return None
+    source["asset_id"] = ref_id
+    for beat in beats:
+        thumb = store.run_artifact(run.id, f"storyboard/{beat['id']}.jpg")
+        try:
+            ffmpeg.extract_frame(source["path"], (float(beat["start_s"]) + float(beat["end_s"])) / 2, thumb, width=360)
+            beat["thumbnail"] = store.rel_to_data(thumb)
+        except Exception:
+            beat["thumbnail"] = None
+    visual = {"cached": True} if (cached.get("analysis") or {}).get("mode") == "frames" else {}
+    plan = _remake_plan(run, beats, source, visual)
+    plan["source"]["cuts_s"] = list(cached.get("cuts_s") or [])
+    analysis = dict(cached.get("analysis") or {})
+    analysis["cached"] = True
+    skeleton = {
+        "version": 3,
+        "partial": False,
+        "source": source,
+        "analysis": analysis,
+        "remake_plan": plan,
+        "cuts_s": list(cached.get("cuts_s") or []),
+        "cut_events": list(cached.get("cut_events") or []),
+        "beats": beats,
+        "transcript": list(cached.get("transcript") or []),
+        "confidence": dict(cached.get("confidence") or {}),
+        "notes": list(cached.get("notes") or []) + ["Cached reference analysis."],
+    }
+    store.atomic_write_json(root / "artifacts" / "skeleton.json", skeleton)
+    return skeleton
+
+
 def analyze(run_id: str) -> dict[str, Any]:
     run = store.read_run(run_id)
     if run is None:
@@ -250,20 +431,77 @@ def analyze(run_id: str) -> dict[str, Any]:
         "width": 720, "height": 1280, "fps": 30, "aspect": "9:16", "has_audio": False,
     }
     duration = float(facts["duration_s"])
-    cuts = ffmpeg.detect_cuts(source, duration) if source else []
-    beats = _beats(duration, cuts)
-    transcript: list[dict[str, Any]] = []
-    if source and facts.get("has_audio") and asr.available():
+    cache_key = ""
+    if ref_id:
+        cache_key = analysis_cache.key(
+            str(ref_id), asr_available=asr.available(), vision_available=vision.available()
+        )
+        cached = analysis_cache.load(cache_key)
+        if cached:
+            restored = _from_cache(run, root, str(ref_id), cached)
+            if restored is not None:
+                return restored
+    events: list[dict[str, Any]] = []
+    if source:
         try:
-            transcript = asr.transcribe(source)
+            events = ffmpeg.detect_events(source, duration)
         except Exception:
-            transcript = []
+            events = []
+    cuts = [float(event["t"]) for event in events if str(event.get("kind")) == "cut"]
+    transcript: list[dict[str, Any]] = []
+    asr_source = "no_reference"
+    asr_error = ""
+    prompt_hint = ""
+    if source:
+        if not facts.get("has_audio"):
+            asr_source = "silent"
+            asr_error = "参考片没有音轨"
+        elif asr.disabled():
+            asr_source = "disabled"
+            asr_error = "ADSTUDIO_ASR=0"
+        elif not asr.available():
+            asr_source = "not_installed"
+            asr_error = "未安装 faster-whisper"
+        else:
+            try:
+                # Product names from the brief bias the decoder towards the right
+                # homophones (e.g. 冬天 vs 通天) without changing the audio.
+                try:
+                    from .. import requirements as requirements_mod
+
+                    req = requirements_mod.derive(str((run.inputs or {}).get("brief") or ""), run.advanced or {})
+                    product = str(req.get("product_hint") or "").strip()
+                    if product:
+                        prompt_hint = f"以下台词来自一条带货视频，商品名称是{product}。"
+                except Exception:
+                    prompt_hint = ""
+                transcript = asr.transcribe(source, prompt_hint=prompt_hint)
+                refine = getattr(asr, "refine", None)
+                if transcript and callable(refine):
+                    selected_text_model = (run.advanced or {}).get("text_model")
+                    transcript = refine(
+                        transcript,
+                        hint=prompt_hint,
+                        text_model=selected_text_model if isinstance(selected_text_model, dict) else None,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                transcript = []
+                asr_error = f"{type(exc).__name__}: {exc}"[:240]
+            if transcript:
+                asr_source = "asr"
+            else:
+                asr_source = "failed"
+                asr_error = asr_error or str(getattr(asr, "LAST_ERROR", "") or "没有识别到台词")
+    beats = _beats(duration, cuts, transcript=transcript)
     if transcript:
         _assign_transcript(beats, transcript)
+        _snap_beats(beats)
     else:
         for beat in beats:
             beat["dialogue"] = []
-            beat["dialogue_source"] = "asr"
+            beat["dialogue_rows"] = []
+    for beat in beats:
+        beat["dialogue_source"] = asr_source
     if source:
         for beat in beats:
             thumb = store.run_artifact(run_id, f"storyboard/{beat['id']}.jpg")
@@ -275,10 +513,13 @@ def analyze(run_id: str) -> dict[str, Any]:
     visual: dict[str, Any] = {}
     analysis_frames: list[dict[str, Any]] = []
     refine_rounds = 0
+    frame_stats: dict[str, int] = {}
     vision_budget = _vision_budget(duration) if vision.available() else 0
     vision_max_frames = _vision_max_frames() if vision.available() else 0
     if source and vision.available():
-        analysis_frames = _plan_analysis_frames(run_id, source, beats, duration, max_frames=vision_budget)
+        analysis_frames = _plan_analysis_frames(
+            run_id, source, beats, duration, max_frames=vision_budget, events=events, stats=frame_stats
+        )
         if analysis_frames:
             visual_frames = vision.analyze_frames(analysis_frames, max_frames=vision_budget)
             first_provider = str(getattr(vision, "LAST_PROVIDER", "") or "")
@@ -324,11 +565,22 @@ def analyze(run_id: str) -> dict[str, Any]:
                         "start_s": start_s,
                         "end_s": end_s,
                         "time_s": candidate,
+                        "role": "refine",
                         "path": thumb,
                     })
                 if extra_frames:
-                    extra_visual = vision.analyze_frames(extra_frames, max_frames=len(extra_frames))
+                    # Re-send the previous batch's last frame as a continuity
+                    # anchor so "compared to the previous frame" still means
+                    # something across two requests. It is not aggregated.
+                    anchor = None
+                    if analysis_frames:
+                        last = analysis_frames[-1]
+                        anchor = {**last, "id": f"{last['id']}_ctx", "context": True}
+                    batch = ([anchor] if anchor else []) + extra_frames
+                    extra_visual = vision.analyze_frames(batch, max_frames=len(batch))
                     if extra_visual:
+                        if anchor:
+                            extra_visual.pop(str(anchor["id"]), None)
                         visual_frames.update(extra_visual)
                         analysis_frames.extend(extra_frames)
                         refine_rounds = 1
@@ -374,6 +626,28 @@ def analyze(run_id: str) -> dict[str, Any]:
         warnings.append("视觉标签不可用，拆解为启发式结果")
         if vision_error:
             warnings.append(vision_error)
+    escalated = int(getattr(vision, "LAST_ESCALATED", 0) or 0)
+    if escalated:
+        warnings.append(f"商品/画面文字由 Doubao pro 复核 {escalated} 帧")
+    asr_note = str(getattr(asr, "LAST_NOTE", "") or "") if asr_source == "asr" else ""
+    if asr_note:
+        warnings.append(f"ASR：{asr_note}")
+    # A failed homophone cleanup leaves visibly wrong characters in the
+    # storyboard, so it has to be reported instead of silently falling back.
+    asr_cleanup_error = ""
+    if asr_source == "asr" and not asr_note:
+        probe = str(getattr(asr, "LAST_ERROR", "") or "").strip()
+        if probe.startswith("cleanup"):
+            asr_cleanup_error = probe
+            warnings.append(f"同音字校对未生效：{probe}")
+    asr_warning = {
+        "silent": "参考片没有音轨，无法转写台词",
+        "disabled": "ASR 已关闭（ADSTUDIO_ASR=0），分镜没有台词",
+        "not_installed": "ASR 未安装，参考片只做画面分析；分镜台词为空",
+        "failed": f"ASR 转写失败：{asr_error}",
+    }.get(asr_source)
+    if asr_warning:
+        warnings.append(asr_warning)
     analysis = {
         "mode": "frames" if visual else "heuristic",
         "provider": provider if visual else "",
@@ -381,10 +655,26 @@ def analyze(run_id: str) -> dict[str, Any]:
         "degraded": not bool(visual),
         "reason": "" if visual else ("视觉标签不可用，拆解为启发式结果" + (f"：{vision_error}" if vision_error else "")),
         "warnings": warnings,
+        "asr": {
+            "source": asr_source,
+            "model": str(getattr(asr, "LAST_MODEL", "") or "") if asr_source == "asr" else "",
+            "error": asr_error or asr_cleanup_error,
+            "lines": len(transcript),
+            "note": asr_note,
+            "cleanup": "ok" if asr_note else ("failed" if asr_cleanup_error else "skipped"),
+        },
         "frame_count": len(analysis_frames),
         "initial_frame_budget": vision_budget,
         "vision_budget": vision_max_frames,
         "refine_rounds": refine_rounds,
+        "frames": {
+            "budget": frame_stats.get("budget", vision_budget),
+            "planned": frame_stats.get("planned", 0),
+            "used": len(analysis_frames),
+            "deduped": frame_stats.get("deduped", 0),
+        },
+        "cuts": {"cut": len(cuts), "motion": max(0, len(events) - len(cuts))},
+        "escalated_frames": int(getattr(vision, "LAST_ESCALATED", 0) or 0),
     }
     skeleton = {
         "version": 3,
@@ -393,11 +683,15 @@ def analyze(run_id: str) -> dict[str, Any]:
         "analysis": analysis,
         "remake_plan": plan,
         "cuts_s": cuts,
+        "cut_events": events,
         "beats": beats,
         "transcript": transcript,
         "confidence": {"asr": 0.85 if transcript else 0.0, "vision": (0.68 if provider == "dsh" else 0.75) if visual else 0.0, "speakers": 0.0, "structure": 0.6 if visual else 0.3},
         "notes": [
-            "ASR transcript attached." if transcript else "No transcript: sound may be absent, ASR disabled, or speech not recognized.",
+            (
+                "ASR transcript attached." if transcript
+                else f"No transcript ({asr_source})" + (f": {asr_error}" if asr_error else "")
+            ),
             (
                 f"Doubao vision tags attached to keyframes ({model})." if provider == "ark"
                 else ("Vision tags attached to keyframes." if provider == "minimax" else f"DSH vision tags attached to keyframes ({model}).")
@@ -406,4 +700,18 @@ def analyze(run_id: str) -> dict[str, Any]:
     }
     path = root / "artifacts" / "skeleton.json"
     store.atomic_write_json(path, skeleton)
+    # Never cache a transient failure: a retry must be able to succeed, and a
+    # cached "ASR failed" entry would outlive the network problem that caused it.
+    cacheable = asr_source != "failed" and not (vision.available() and not visual)
+    if cache_key and cacheable:
+        analysis_cache.save(cache_key, {
+            "source": {k: value for k, value in skeleton["source"].items() if k != "asset_id"},
+            "analysis": analysis,
+            "cuts_s": cuts,
+            "cut_events": events,
+            "beats": beats,
+            "transcript": transcript,
+            "confidence": skeleton["confidence"],
+            "notes": skeleton["notes"],
+        })
     return skeleton

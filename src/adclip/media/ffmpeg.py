@@ -18,6 +18,13 @@ def _resolve(name: str) -> str:
 FFMPEG = _resolve("ffmpeg")
 FFPROBE = _resolve("ffprobe")
 
+# Scene-change grading. A real cut spikes above CUT_SCORE and settles; anything
+# between MOTION_SCORE and CUT_SCORE is movement inside one continuous shot.
+CUT_SCORE = 0.30
+MOTION_SCORE = 0.12
+_PTS_RE = re.compile(r"pts_time:([0-9.]+)")
+_SCORE_RE = re.compile(r"lavfi\.scene_score=([0-9.]+)")
+
 
 def install_hint() -> str:
     """One platform-appropriate sentence for a missing ffmpeg."""
@@ -96,17 +103,82 @@ def _aspect(width: int, height: int) -> str:
     return "1:1"
 
 
-def detect_cuts(path: str | Path, duration: float, threshold: float = 0.18) -> list[float]:
+def _scene_points(path: str | Path, *, floor: float = 0.05) -> list[tuple[float, float]]:
+    """(pts_time, scene_score) pairs for frames above `floor`."""
     proc = run(
-        [FFMPEG, "-hide_banner", "-i", str(path), "-vf", f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-"],
+        [
+            FFMPEG, "-hide_banner", "-i", str(path),
+            "-vf", f"select='gt(scene,{floor})',metadata=print",
+            "-f", "null", "-",
+        ],
         timeout=300,
     )
-    times = sorted({round(float(x), 3) for x in re.findall(r"pts_time:([0-9.]+)", proc.stderr or "")})
-    merged: list[float] = []
-    for value in times:
-        if 0.2 < value < duration - 0.2 and (not merged or value - merged[-1] >= 0.35):
-            merged.append(value)
+    points: list[tuple[float, float]] = []
+    pending: float | None = None
+    for line in (proc.stderr or "").splitlines():
+        stamp = _PTS_RE.search(line)
+        if stamp:
+            pending = float(stamp.group(1))
+            continue
+        score = _SCORE_RE.search(line)
+        if score and pending is not None:
+            points.append((pending, float(score.group(1))))
+            pending = None
+    return points
+
+
+def detect_events(
+    path: str | Path,
+    duration: float,
+    *,
+    floor: float = 0.05,
+    motion: float = MOTION_SCORE,
+    cut: float = CUT_SCORE,
+    settle: float = 0.30,
+) -> list[dict[str, Any]]:
+    """Scene changes classified as `cut` or `motion`.
+
+    A real cut is one big spike followed by calm frames. A camera pan, a hand
+    movement or a cloth being pulled produces a sustained score instead, so it
+    is reported as `motion` and never splits a shot.
+    """
+    points = _scene_points(path, floor=min(floor, motion))
+    grouped: list[dict[str, float]] = []
+    for time_s, score in points:
+        if grouped and time_s - grouped[-1]["t"] <= 0.25:
+            if score > grouped[-1]["score"]:
+                grouped[-1] = {"t": time_s, "score": score}
+        else:
+            grouped.append({"t": time_s, "score": score})
+    events: list[dict[str, Any]] = []
+    for item in grouped:
+        time_s, score = item["t"], item["score"]
+        if not (0.2 < time_s < duration - 0.2):
+            continue
+        kind = "motion"
+        if score >= cut:
+            tail = [value for at, value in points if time_s < at <= time_s + settle]
+            sustained = (sum(tail) / len(tail)) if tail else 0.0
+            kind = "cut" if sustained < cut * 0.5 else "motion"
+        if kind == "motion" and score < motion:
+            continue
+        events.append({"t": round(time_s, 3), "score": round(score, 4), "kind": kind})
+    merged: list[dict[str, Any]] = []
+    for event in events:
+        if merged and event["t"] - merged[-1]["t"] < 0.35:
+            if event["score"] > merged[-1]["score"]:
+                merged[-1] = event
+            continue
+        merged.append(event)
     return merged
+
+
+def detect_cuts(path: str | Path, duration: float, threshold: float = CUT_SCORE) -> list[float]:
+    """Validated cut times only (kept for QA and older callers)."""
+    try:
+        return [float(event["t"]) for event in detect_events(path, duration, cut=threshold) if event["kind"] == "cut"]
+    except Exception:
+        return []
 
 
 def extract_frame(source: str | Path, at_s: float, target: str | Path, width: int = 360) -> Path:

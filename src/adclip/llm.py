@@ -63,25 +63,38 @@ def _strip_reasoning(text: str) -> str:
 
 def _chat_dsh(system: str, user: str, *, max_tokens: int, temperature: float, text_model: dict[str, str] | None = None) -> str:
     global LAST_ERROR, LAST_MODEL
-    payload = {
-        "system": system,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
-        "maxTokens": max_tokens,
-    }
-    if text_model:
-        payload["provider"] = text_model["provider"]
-        payload["model"] = text_model["model"]
-    with httpx.Client(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
-        response = client.post(DSH_URL, json=payload)
-        if response.status_code >= 400:
-            raise RuntimeError(f"DSH bridge HTTP {response.status_code}: {response.text[:300]}")
-        data = response.json()
-        dsh = data.get("dsh") or {}
-        text = _strip_reasoning(str(dsh.get("text") or ""))
-        if not text:
-            raise RuntimeError("DSH bridge returned empty text")
-        LAST_MODEL = str(dsh.get("model") or "dsh")
-        return text
+
+    def _post(tokens: int) -> str:
+        payload = {
+            "system": system,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
+            "maxTokens": tokens,
+        }
+        if text_model:
+            payload["provider"] = text_model["provider"]
+            payload["model"] = text_model["model"]
+        with httpx.Client(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
+            response = client.post(DSH_URL, json=payload)
+            if response.status_code >= 400:
+                raise RuntimeError(f"DSH bridge HTTP {response.status_code}: {response.text[:300]}")
+            data = response.json()
+            dsh = data.get("dsh") or {}
+            text = _strip_reasoning(str(dsh.get("text") or ""))
+            if not text:
+                raise RuntimeError("DSH bridge returned empty text")
+            LAST_MODEL = str(dsh.get("model") or "dsh")
+            return text
+
+    try:
+        return _post(max_tokens)
+    except RuntimeError as exc:
+        # Reasoning models spend the visible-text budget on their trace: an
+        # empty reply at a small maxTokens almost always means "the budget was
+        # used up thinking", so one retry with a bigger budget is cheap and
+        # turns a silent failure into a real answer.
+        if "empty text" not in str(exc) or max_tokens >= 8000:
+            raise
+        return _post(min(8000, max(2400, max_tokens * 2)))
 
 
 def _chat_minimax(system: str, user: str, *, max_tokens: int, temperature: float) -> str:

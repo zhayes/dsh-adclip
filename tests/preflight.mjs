@@ -12,7 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { preflight, readSetupState, writeSetupState } from '../plugin/host/preflight.js'
+import { asrRemedy, preflight, readSetupState, writeSetupState } from '../plugin/host/preflight.js'
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pluginRoot = path.join(repo, 'plugin')
@@ -59,6 +59,25 @@ if (result.blocking.includes('sources')) {
 assert.equal(result.firstRun, true)
 assert.deepEqual(readSetupState(dataDir), { doneAt: null, skippedAt: null })
 assert.equal(result.paths.dataDir, dataDir)
+
+// Optional ASR must explain the same step differently per OS: the shell syntax
+// for HF_ENDPOINT and the runtime library note are not portable.
+const winNote = asrRemedy('win32').note
+const macNote = asrRemedy('darwin').note
+const linuxNote = asrRemedy('linux').note
+assert.match(winNote, /PowerShell/)
+assert.match(winNote, /Visual C\+\+/)
+assert.match(macNote, /export HF_ENDPOINT/)
+assert.match(macNote, /Apple Silicon/)
+assert.match(linuxNote, /huggingface\.co/)
+assert.notEqual(winNote, macNote)
+assert.notEqual(macNote, linuxNote)
+
+const asrItem = result.items.find((item) => item.id === 'asr')
+if (asrItem && asrItem.remedy) {
+  assert.ok(asrItem.remedy.command.includes('-m pip install faster-whisper'), 'ASR remedy needs a copyable command')
+  assert.ok(asrItem.remedy.note.length > 20, 'ASR remedy needs an OS-specific note')
+}
 
 writeSetupState(dataDir, { skippedAt: '2026-01-01T00:00:00.000Z' })
 assert.equal(readSetupState(dataDir).skippedAt, '2026-01-01T00:00:00.000Z')

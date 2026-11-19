@@ -39,16 +39,29 @@
 
 | 页面 | 过滤条件 |
 |---|---|
-| 爆款复刻 | 自动选型：`full` → `reference` → `generation`；用户不选模型 |
+| 爆款复刻 | 自动选型：`full` → `reference` → `keyframe` → `generation`；用户不选模型 |
 | 自由创作（视频） | `text_to_video`；只有 `image_to_video` 的模型继续走"必须上传图"分支 |
 | 自由创作（文生图片） | `kind == "image"` 且 `text_to_image` |
 
-爆款复刻的候选顺序：
+爆款复刻的候选顺序由 `catalog.remake_chain()` 定义（与 `vision_chain()` 同构），
+`src/adclip/remake_policy.py` 负责准入与降级：
 
-1. `minimax.h3`（`full`）：参考视频 + 参考图 + 原声，完整复刻。
-2. Seedance 2.5 / 2.0（`reference`）：H3 不可用且允许参考生成时；真人参考仍受方舟风控。
-3. Seedance 2.0 Fast / Mini（`generation`）：不把真人参考视频发给模型，只按分析/脚本重建。
-4. 没有视频模型：只返回拆解（`analysis_only`）。
+1. `minimax.h3`（`full`）：参考视频 + 参考图 + 原声，完整复刻。准入 4–15s、≤50MB。
+2. Seedance 2.5 / 2.0（`reference`）：**暂不启用**。Ark 的内容接口只接受公网
+   `video_url`，仓库没有素材托管能力，所以 `remake.reference_video_ready` 保持 false，
+   链路会如实显示"参考直传暂不启用：需要公网素材托管"。接入方式见
+   `scripts/probe_seedance_edit.py`（先验证账号权限），再补私有桶 + 短时效签名上传。
+   真人参考还受方舟风控。
+3. `keyframe`：首帧锚定（Kling v3）。用参考片首帧作首帧条件，适合**只换人**的场景；
+   换商品需要商品参考图，而首帧模型只收一张图，所以策略层会跳过这一档并记录原因。
+   只有带原生音频的模型能进入这一档，否则口播会丢。
+4. `generation`（含 Seedance 2.0 Fast/Mini 和无法接收参考视频的 reference 档模型）：
+   不把参考视频发给模型，只按拆解/脚本重建。
+5. 没有视频模型：只返回拆解（`analysis_only`）。
+
+降级不静默：每次跳过或失败都写进 `selection.history`，H3 运行期失败会在同一条 run 内
+自动降到下一档，并把原因写入 `result.warnings`。`full` 档模型永远不会作为普通文生视频候选
+被再次调用。
 
 Hailuo 2.3 Fast 只有图生视频，不进入复刻候选。
 
@@ -90,18 +103,26 @@ Hailuo 2.3 Fast 只有图生视频，不进入复刻候选。
 
 ## 参考片拆解视觉链
 
-`catalog.vision_chain()` 是唯一定义，顺序固定：
+`catalog.vision_chain()` 是唯一定义，默认顺序（成本优先）：
 
 1. `minimax.m3`（`MINIMAX_API_KEY`）
-2. `ark.doubao-seed-2.1-pro` → `turbo` → `lite`（`ADSTUDIO_VISION_ARK_ORDER` 可改，已判定
+2. `ark.doubao-seed-2.1-lite` → `turbo` → `pro`（`ADSTUDIO_VISION_CHEAP_FIRST=0` 可回到
+   `pro → turbo → lite`；`ADSTUDIO_VISION_ARK_ORDER` 仍控制方舟内部顺序，已判定
    `not_open` 的会跳过）
 3. `dsh.vision`（Host `/adplus/api/dsh/vision`，选第一个 `inputModalities` 含 `image` 的 DSH 模型）
 4. `heuristic`（永远可用）
 
 任何一步成功即停止；失败只累计原因，最终 `analysis.provider/model` 记录实际来源，
-`analysis.warnings` 记录降级原因。同一条链通过 `GET /capabilities` 的
-`scheduling.vision`、`adclip_list_capabilities` 工具和设置页展示，改顺序只改
-`catalog.vision_chain()`。
+`analysis.warnings` 记录降级原因。
+
+**低成本复核**：lite 先把全部帧打完，只有这些帧会再用 pro 复核（最多 4 帧，
+`ADSTUDIO_VISION_ESCALATE=0` 可关）：`unclear` 含 `product`/`on_screen_text`、
+`product_visibility` 是`主体`/`部分遮挡`、或商品名缺失/为“未识别商品”。
+复核后 `LAST_MODEL` 记录为 `lite+pro`，`analysis.escalated_frames` 记帧数。
+已知局限：lite 完全漏掉小字号贴纸文字时不会被发现。
+
+同一条链通过 `GET /capabilities` 的 `scheduling.vision`、`adclip_list_capabilities` 工具
+和设置页展示，改顺序只改 `catalog.vision_chain()`。
 
 ## DSH 工具
 

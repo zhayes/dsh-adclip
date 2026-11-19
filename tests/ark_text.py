@@ -200,9 +200,9 @@ def check_vision_chain() -> None:
     ids = [row["id"] for row in chain]
     assert ids == [
         "minimax.m3",
-        "ark.doubao-seed-2.1-pro",
-        "ark.doubao-seed-2.1-turbo",
         "ark.doubao-seed-2.1-lite",
+        "ark.doubao-seed-2.1-turbo",
+        "ark.doubao-seed-2.1-pro",
         "dsh.vision",
         "heuristic",
     ], ids

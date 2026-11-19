@@ -39,7 +39,12 @@ def migrate_legacy() -> dict[str, Any]:
 
     The legacy directory is never deleted; if the target already has content it
     is left alone. This makes plugin/engine upgrades non-destructive.
+
+    Test mode never migrates: the legacy dir can hold the developer's real
+    provider keys, and a test run must never pick them up and call a paid API.
     """
+    if os.environ.get("ADCLIP_TEST_MODE", "").strip() == "1":
+        return {"migrated": False, "reason": "test mode"}
     if DATA == LEGACY_DATA or not LEGACY_DATA.is_dir():
         return {"migrated": False, "reason": "not needed"}
     try:

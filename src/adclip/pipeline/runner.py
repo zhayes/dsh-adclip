@@ -69,6 +69,7 @@ def execute(run_id: str) -> None:
                 run,
                 source_duration=source.get("duration_s"),
                 source_aspect=str(source.get("aspect") or ""),
+                source_size_bytes=source.get("size_bytes"),
             )
             store.write_run(run)
         _set_step(run_id, "analyze", "done", 0.1)
@@ -155,6 +156,7 @@ def execute(run_id: str) -> None:
                 run.result = {
                     **result,
                     "qa": qa_report,
+                    "remake_score": (qa_report or {}).get("remake_score"),
                     "demo": bool(generated.get("demo", True)),
                     "model": generated.get("model"),
                     "audio_mode": generated.get("audio_mode"),
@@ -207,6 +209,7 @@ def execute(run_id: str) -> None:
             run.result = {
                 **result,
                 "qa": qa_report,
+                "remake_score": (qa_report or {}).get("remake_score"),
                 "demo": bool(generated.get("demo", True)),
                 "model": generated.get("model"),
                 "audio_mode": run.advanced.get("audio_mode"),

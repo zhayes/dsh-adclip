@@ -48,6 +48,37 @@ def _data_uri(path: Path) -> str:
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 
 
+def _payload(
+    model_id: str,
+    prompt: str,
+    *,
+    images: list[Path] | None = None,
+    duration: int = 8,
+    resolution: str = "720p",
+    aspect: str = "9:16",
+) -> dict:
+    """Ark request body. `watermark: false` is the only thing that removes the
+    provider's overlay; prompt text cannot, and naming it there can leak the
+    word into the picture."""
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for path in (images or [])[:9]:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": _data_uri(path)},
+            "role": "reference_image",
+        })
+    return {
+        "model": model_id,
+        "content": content,
+        "duration": max(4, min(30, int(duration))),
+        "resolution": resolution,
+        "ratio": aspect,
+        "generate_audio": True,
+        "watermark": False,
+        "return_last_frame": False,
+    }
+
+
 class ArkProvider(Provider):
     id = "ark"
 
@@ -68,23 +99,14 @@ class ArkProvider(Provider):
         model_id = _model_id(model)
         if model_id is None:
             raise ProviderError(f"未知 Ark 模型：{model}")
-        content: list[dict] = [{"type": "text", "text": prompt}]
-        for path in (images or [])[:9]:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": _data_uri(path)},
-                "role": "reference_image",
-            })
-        payload = {
-            "model": model_id,
-            "content": content,
-            "duration": max(4, min(30, int(duration))),
-            "resolution": resolution,
-            "ratio": aspect,
-            "generate_audio": True,
-            "watermark": False,
-            "return_last_frame": False,
-        }
+        payload = _payload(
+            model_id,
+            prompt,
+            images=images,
+            duration=duration,
+            resolution=resolution,
+            aspect=aspect,
+        )
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         try:
             with httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0)) as client:

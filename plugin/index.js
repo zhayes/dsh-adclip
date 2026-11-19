@@ -68,6 +68,8 @@ export function apply(ctx, config = {}) {
       '【AdClip 参考片拆解视觉链】',
       '视觉标签按 MiniMax-M3 → Doubao-Seed-2.1（pro → turbo → lite，火山方舟）→ DSH 视觉桥 → 启发式 自动降级。',
       '不要询问用户选择视觉模型；用 adclip_get_analysis 读取 provider/model，degraded 时说明降级到启发式的原因。',
+      '台词时间轴来自本地语音识别：需要单独转写或拿逐句时间时用 adclip_transcribe_audio（asset_id 或 run_id）。',
+      'ASR 未安装或失败时 analysis.asr.source 会是 not_installed/disabled/failed/silent，如实告诉用户并给出安装命令，不要编造台词。',
     ].join('\n'),
   }), 'adplus-studio-vision-prompt')
 

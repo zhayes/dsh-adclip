@@ -74,6 +74,19 @@ def build_storyboard(run_id: str) -> dict[str, Any]:
         except Exception:
             pass
     rows = _segments_for(run, skeleton, script, final_s)
+    # Show the same time slots the prompt hands the model, so a line that cannot
+    # be spoken before the cut is visible in the UI instead of only in the video.
+    if run.scenario == "viral-remake":
+        try:
+            from . import remake_spec
+
+            spec = remake_spec.build_spec(run, skeleton, script)
+            timed = [shot.get("timed_lines") or [] for shot in spec.get("shots") or []]
+            for index, seg in enumerate(rows):
+                if index < len(timed) and timed[index]:
+                    seg["lines"] = timed[index]
+        except Exception:  # noqa: BLE001
+            pass
     for i, seg in enumerate(rows):
         if final.is_file():
             thumb = store.run_artifact(run_id, f"storyboard/seg_{i}.jpg")

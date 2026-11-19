@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from .. import params, store
@@ -36,9 +35,11 @@ def post(run_id: str) -> dict[str, Any]:
     ffmpeg.normalize(raw, final, width=width, height=height, fps=int(advanced.get("fps") or 30), duration=duration)
     audio_source = None
     warnings: list[str] = []
+    audio_mode = str(advanced.get("audio_mode") or "regenerate")
+    replace_scope = str(advanced.get("replace_scope") or "both")
     if selection.get("mode") == "h3_reference":
         audio_source = "h3"
-        if str(advanced.get("audio_mode") or "regenerate") == "preserve":
+        if audio_mode == "preserve":
             ref_id = (run.inputs or {}).get("reference_asset_id")
             try:
                 reference = store.asset_media_path(str(ref_id)) if ref_id else None
@@ -51,6 +52,22 @@ def post(run_id: str) -> dict[str, Any]:
                     warnings.append("参考片没有可用音轨，保留 H3 生成音频")
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"替换参考音轨失败，保留 H3 音频：{type(exc).__name__}: {exc}"[:240])
+    elif run.scenario == "viral-remake" and audio_mode == "preserve" and replace_scope == "person":
+        # Only person replacement may keep the original voice: a new product name
+        # or price would otherwise survive in the old audio track.
+        ref_id = (run.inputs or {}).get("reference_asset_id")
+        try:
+            reference = store.asset_media_path(str(ref_id)) if ref_id else None
+            if reference and ffmpeg.probe(reference).get("has_audio"):
+                temp = final.with_suffix(".audio.mp4")
+                ffmpeg.replace_audio(final, reference, temp)
+                os.replace(temp, final)
+                audio_source = "reference"
+                warnings.append("已替换回参考片原声；换人后口型可能有轻微偏差，请人工复核")
+            else:
+                warnings.append("参考片没有可用音轨，保留生成的音频")
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"替换参考音轨失败，保留生成音频：{type(exc).__name__}: {exc}"[:240])
     # Subtitles are a sidecar SRT, never burned in (the ffmpeg build has no
     # libass/drawtext). The run's own setting decides whether we deliver one.
     srt_path = store.run_artifact(run_id, "subtitles.srt")

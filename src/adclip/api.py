@@ -23,11 +23,13 @@ from . import capabilities
 from . import catalog as model_catalog
 from . import image_params, intents, llm, params, personas, remake_planner, settings, store
 from .providers import ark_text, discovery
+from .media import asr
 from .media import ffmpeg
 from .media import stitch as stitch_mod
 from .media import subtitles
 from .models import AssistantRequest, Run, RunStep, StitchRequest
 from .pipeline import image_runner
+from .pipeline import remake_spec
 from .pipeline import replace as segment_replace
 from .pipeline import qa as qa_pipeline
 from .pipeline import runner, segment
@@ -48,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.9"
+VERSION = "0.1.12"
 
 
 def _media_type(path: Path) -> str:
@@ -63,7 +65,7 @@ def _probe_asset(asset_id: str) -> dict[str, Any]:
     try:
         if record.get("kind") == "video":
             facts = ffmpeg.probe(target)
-            record.update({k: facts[k] for k in ("width", "height", "duration_s")})
+            record.update({k: facts[k] for k in ("width", "height", "duration_s", "size_bytes")})
         elif record.get("kind") == "image":
             from PIL import Image
 
@@ -192,6 +194,7 @@ def get_capabilities() -> dict[str, Any]:
         model_catalog.rows(),
         text_models=model_catalog.text_rows(),
         vision_chain=model_catalog.vision_chain(),
+        remake_chain=model_catalog.remake_chain(),
     )
 
 
@@ -545,6 +548,46 @@ def analysis(run_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/asr/status")
+def asr_status() -> dict[str, Any]:
+    """Whether speech recognition can run, and why not when it cannot."""
+    return asr.status()
+
+
+@app.post("/transcribe")
+def transcribe(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Transcribe one asset (or a run's reference video). Never 500s on ASR errors."""
+    asset_id = str(payload.get("asset_id") or "")
+    run_id = str(payload.get("run_id") or "")
+    if not asset_id and run_id:
+        run = store.read_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        asset_id = str((run.inputs or {}).get("reference_asset_id") or "")
+    if not asset_id:
+        raise HTTPException(status_code=400, detail="asset_id or run_id is required")
+    try:
+        path = store.asset_media_path(asset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="asset not found") from exc
+    word_level = bool(payload.get("word_level"))
+    try:
+        limit = max(5.0, min(300.0, float(payload.get("max_seconds") or 60)))
+    except (TypeError, ValueError):
+        limit = 60.0
+    lines = asr.transcribe_words(path, max_seconds=limit) if word_level else asr.transcribe(path, max_seconds=limit)
+    return {
+        "available": asr.available(),
+        "status": asr.status(),
+        "asset_id": asset_id,
+        "word_level": word_level,
+        "model": str(getattr(asr, "LAST_MODEL", "") or ""),
+        "lines": lines,
+        "text": "".join(str(row.get("text") or "") for row in lines) if word_level else "\n".join(str(row.get("text") or "") for row in lines),
+        "error": str(getattr(asr, "LAST_ERROR", "") or ""),
+    }
+
+
 @app.get("/runs/{run_id}/storyboard")
 def storyboard(run_id: str) -> dict[str, Any]:
     run = store.read_run(run_id)
@@ -554,6 +597,53 @@ def storyboard(run_id: str) -> dict[str, Any]:
     if not data:
         data = segment.build_storyboard(run_id)
     return data
+
+
+@app.get("/runs/{run_id}/prompt")
+def prompt_preview(run_id: str) -> dict[str, Any]:
+    """The exact prompt a generation step would send, without spending a call."""
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
+    if not skeleton:
+        raise HTTPException(status_code=409, detail="run has no analysis yet")
+    script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
+    selection = getattr(run, "selection", None) or {}
+    mode = str(selection.get("mode") or "generation")
+    spec = remake_spec.build_spec(run, skeleton, script)
+    audio_mode = str((run.advanced or {}).get("audio_mode") or "regenerate")
+    auto = remake_spec.render(spec, mode, run=run, skeleton=skeleton, script=script, audio_mode=audio_mode)
+    override = str((run.inputs or {}).get("prompt_override") or "")
+    text = override or auto
+    return {
+        "mode": mode,
+        "model": str(selection.get("model") or ""),
+        "chars": len(text),
+        "auto_chars": len(auto),
+        "text": text,
+        "override": override,
+        "shots": len(spec.get("shots") or []),
+        "lines": sum(len(shot.get("timed_lines") or []) for shot in spec.get("shots") or []),
+        "requirements": spec.get("requirements") or {},
+    }
+
+
+@app.post("/runs/{run_id}/prompt-override")
+def prompt_override(run_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Store an edited prompt on the run; the next generation uses it verbatim."""
+    run = store.read_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    inputs = dict(run.inputs or {})
+    text = str(payload.get("text") or "").strip()
+    if text:
+        inputs["prompt_override"] = text[:4000]
+    else:
+        inputs.pop("prompt_override", None)
+    run.inputs = inputs
+    store.write_run(run)
+    return {"ok": True, "chars": len(str(inputs.get("prompt_override") or ""))}
 
 
 def _apply_changes(advanced: dict[str, Any], inputs: dict[str, Any], changes: list[dict[str, Any]]) -> None:

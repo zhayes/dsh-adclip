@@ -11,6 +11,7 @@ from typing import Any
 
 from .. import llm, store
 from . import persona as persona_mod
+from . import timing
 
 
 def _text_model(run: Any) -> dict[str, Any] | None:
@@ -193,14 +194,16 @@ def _fallback_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) ->
     rows = []
     for i, beat in enumerate(beats):
         texts = spoken[:3] if len(beats) == 1 else [spoken[min(i, len(spoken) - 1)]] if spoken else []
+        texts, trimmed = timing.fit_lines(list(texts), float(beat.get("len_s") or 2))
         lines = []
         for j, text in enumerate(texts[:3]):
             speaker = "A" if j % 2 == 0 else "B"
             lines.append({"speaker": speaker, "text": text[:24], "chars": len(text[:24])})
         rows.append({
             "id": beat["id"], "function": beat.get("function"), "len_s": beat.get("len_s"),
-            "cps": 4.0, "max_chars": max(12, int(float(beat.get("len_s") or 2) * 4.0)),
-            "chars": sum(line["chars"] for line in lines), "fit": "ok", "lines": lines,
+            "cps": timing.DEFAULT_CPS,
+            "max_chars": timing.char_budget(float(beat.get("len_s") or 2)),
+            "chars": sum(line["chars"] for line in lines), "fit": "over" if trimmed else "ok", "lines": lines,
             "shot": (persona_mod.persona_label(run.advanced) + "在中景里自然交流，商品可见") if persona_mod.persona_label(run.advanced) else "人物在中景里自然交流，商品可见", "start_s": beat.get("start_s"), "end_s": beat.get("end_s"),
         })
     return {"version": 2, "beats": rows, "totals": {"duration_s": (skeleton.get("source") or {}).get("duration_s"), "chars": sum(r["chars"] for r in rows)}, "must_keep_map": {i["id"]: i.get("beat") for i in gag.get("must_keep") or []}, "compliance_flags": ["demo 文案，价格/功效需人工核对"], "source": {"degraded": True, "reason": "demo pipeline"}}
@@ -214,7 +217,9 @@ def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dic
     transcript = (skeleton.get("transcript") or [])[:24]
     transcript_text = "\n".join(f"- {x.get('start_s')}-{x.get('end_s')}s {x.get('text')}" for x in transcript)[:1600]
     beat_text = "\n".join(
-        f"- {b['id']} {b['start_s']:.1f}-{b['end_s']:.1f}s [{b.get('function')}] 画面：{((b.get('visual') or {}).get('action') or '')[:90]}"
+        f"- {b['id']} {b['start_s']:.1f}-{b['end_s']:.1f}s [{b.get('function')}] "
+        f"台词总字数≤{timing.char_budget(float(b.get('len_s') or (b['end_s'] - b['start_s']) or 2))} 字 "
+        f"画面：{((b.get('visual') or {}).get('action') or '')[:90]}"
         for b in beats
     )
     keeps = "\n".join(f"- [{k['beat']}] {k['text']}" for k in gag.get("must_keep") or [])
@@ -234,7 +239,7 @@ def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dic
 
 写一段可直接交给原生对白视频模型的中文脚本。要求：
 - 只输出 JSON；
-- 每个 beat 给出 1-3 行短台词，每行不超过 18 个汉字；
+- 每个 beat 给出 1-3 行短台词，每行不超过 18 个汉字，该 beat 所有台词合计不得超过标注的字数上限（超过就念不完，视频会在台词结束前收尾）；
 - 「产品与需求」是给你的制作说明（改什么、保留什么、卖点是什么），不是台词，不要照抄；只有用「」或引号括起来的句子才可以原样念出来；
 - 台词自然、像人说话，由你根据产品信息重新写；
 - 保留用户给出的价格数字和 must_keep 的动作/信息；
@@ -272,10 +277,14 @@ JSON:
             fallback = _fallback_script(run, skeleton, gag)
             fallback_row = next((r for r in fallback["beats"] if r["id"] == beat["id"]), None)
             lines = fallback_row["lines"] if fallback_row else []
+        kept, trimmed = timing.fit_lines([line["text"] for line in lines], float(beat.get("len_s") or 2))
+        if trimmed:
+            lines = [dict(line, text=text, chars=len(text)) for line, text in zip(lines, kept)]
         rows.append({
             "id": beat["id"], "function": beat.get("function"), "len_s": beat.get("len_s"),
-            "cps": 4.0, "max_chars": max(12, int(float(beat.get("len_s") or 2) * 4.0)),
-            "chars": sum(line["chars"] for line in lines), "fit": "ok", "lines": lines,
+            "cps": timing.DEFAULT_CPS,
+            "max_chars": timing.char_budget(float(beat.get("len_s") or 2)),
+            "chars": sum(line["chars"] for line in lines), "fit": "over" if trimmed else "ok", "lines": lines,
             "shot": persona_mod.neutralize_people(str(item.get("shot") or "人物在中景里自然交流，商品可见"), run.advanced)[:120],
             "start_s": beat.get("start_s"), "end_s": beat.get("end_s"),
         })
@@ -295,7 +304,7 @@ def rewrite_shot(run: Any, index: int, instruction: str) -> dict[str, Any]:
     prompt = f"""这条广告的需求（制作说明，不是台词）：
 {brief or '无'}
 
-当前这一镜：{row.get('function')}，{row.get('len_s')}s
+当前这一镜：{row.get('function')}，{row.get('len_s')}s，台词总字数≤{timing.char_budget(float(row.get('len_s') or 2))} 字
 当前台词：
 {current}
 当前画面：{row.get('shot') or '无'}
@@ -306,7 +315,7 @@ def rewrite_shot(run: Any, index: int, instruction: str) -> dict[str, Any]:
 
 只重写这一镜的台词和画面。要求：
 - 只输出 JSON；
-- 1-3 行中文台词，每行不超过 18 个汉字；
+- 1-3 行中文台词，每行不超过 18 个汉字，合计不超过上面标注的字数上限；
 - 操作者要求是制作指令，不是台词，不要照抄；只有用「」或引号括起来的句子才可以原样念出来；
 - 台词自然、像人说话；保留已有的价格数字，不要编造未提供的原价、对比价、销量、功效或绝对化宣传；
 - 画面 action 与台词一致，不要沿用参考片人物的性别/年龄/外貌。
@@ -327,8 +336,13 @@ JSON:
     lines = [line for j, line in enumerate(lines) if f"line{j}" not in rejected]
     if not lines:
         raise RuntimeError("模型没有给出可用台词")
+    kept, trimmed = timing.fit_lines([line["text"] for line in lines], float(row.get("len_s") or 2))
+    if trimmed:
+        lines = [dict(line, text=text, chars=len(text)) for line, text in zip(lines, kept)]
     row["lines"] = lines
     row["chars"] = sum(line["chars"] for line in lines)
+    row["max_chars"] = timing.char_budget(float(row.get("len_s") or 2))
+    row["fit"] = "over" if trimmed else "ok"
     shot = str(data.get("shot") or row.get("shot") or "")
     row["shot"] = persona_mod.neutralize_people(shot, run.advanced)[:120] or row.get("shot")
     doc["totals"] = {**(doc.get("totals") or {}), "chars": sum(int(r.get("chars") or 0) for r in rows)}

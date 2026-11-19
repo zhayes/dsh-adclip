@@ -122,6 +122,24 @@ function remedies() {
   }
 }
 
+/** Per-OS advice for the optional speech recogniser.
+ *
+ * The install command uses the private venv's interpreter, so it differs by OS
+ * on its own; the model download hint needs the shell-specific env syntax.
+ */
+export function asrRemedy(platform = process.platform) {
+  const notes = {
+    win32: '首次识别会下载约 500 MB 模型。网络受限时先在 PowerShell 执行 $env:HF_ENDPOINT="https://hf-mirror.com" 再重启 DSH；若提示缺少运行库，安装 Microsoft Visual C++ 2015–2022 Redistributable。',
+    darwin: '首次识别会下载约 500 MB 模型。网络受限时在终端执行 export HF_ENDPOINT=https://hf-mirror.com 后重启 DSH；Apple Silicon 首次加载模型会慢几十秒。',
+    linux: '首次识别会下载约 500 MB 模型。网络受限时执行 export HF_ENDPOINT=https://hf-mirror.com 后重启 DSH；确认能访问 huggingface.co 或镜像。',
+  }
+  return {
+    kind: 'command',
+    url: 'https://github.com/SYSTRAN/faster-whisper',
+    note: (notes[platform] || notes.linux) + ' 识别不准确时可用 ADSTUDIO_ASR_MODEL=medium 提高中文准确率（首次多下载约 1.5GB）。',
+  }
+}
+
 function trimLine(text, limit = 110) {
   const line = String(text || '').split(/\r?\n/).find(Boolean) || ''
   return line.length > limit ? line.slice(0, limit) + '…' : line
@@ -255,11 +273,9 @@ export async function preflight({ config = {}, dataDir = defaultDataDir(), plugi
     detail: asrInstalled
       ? '已安装，参考片可自动转写'
       : '未安装，参考片只做画面分析；不影响出片',
-    remedy: {
-      kind: 'command',
+    remedy: asrInstalled ? null : {
+      ...asrRemedy(),
       command: `"${venvPy}" -m pip install faster-whisper`,
-      url: 'https://github.com/SYSTRAN/faster-whisper',
-      note: '首次识别会下载约 500 MB 模型；网络受限时设置 HF_ENDPOINT=https://hf-mirror.com。',
     },
   })
 
