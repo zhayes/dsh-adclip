@@ -1680,14 +1680,10 @@ window.__ModuleLoader__.load({
                 h('textarea', {
                   className: 'adp-brief-input', value: brief, maxLength: 2000, rows: 4,
                   placeholder: '例如：产品活动价 19.9，卖点是不油腻、追剧零食；保留原片的比价和抢购动作，台词更生活化。',
-                  onChange: (e) => setBrief(e.currentTarget.value),
-                  onKeyDown: (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); start() } }
+                  onChange: (e) => setBrief(e.currentTarget.value)
                 }),
                 h('div', { className: 'adp-brief-foot' },
-                  h('span', null, '写产品、卖点、价格、想保留/想改的地方；要原样念的台词用「」括起来。'),
-                  h('div', { className: 'adp-row', style: { gap: 8 } },
-                    h('span', { className: 'adp-key' }, '⌘ ↵ 开始')
-                  )
+                  h('span', null, '写产品、卖点、价格、想保留/想改的地方；要原样念的台词用「」括起来。')
                 )
               ),
               h('div', { className: 'adp-section-head' },
