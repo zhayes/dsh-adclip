@@ -1618,9 +1618,9 @@ window.__ModuleLoader__.load({
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
       const [advanced, setAdvanced] = useState({ duration: 12, aspect: '9:16', resolution: '720p', model: '' })
-      // Default: pause after the prompt is rendered so it can be reviewed before
-      // spending a generation. Checking this skips that pause.
-      const [skipConfirm, setSkipConfirm] = useState(false)
+      // Default: go straight to generation. Unchecking pauses after the prompt is
+      // rendered so it can be reviewed before spending a generation.
+      const [skipConfirm, setSkipConfirm] = useState(true)
       const [replaceScope, setReplaceScope] = useState('both')
       const [personScope, setPersonScope] = useState('main')
       const [audioMode, setAudioMode] = useState('regenerate')
@@ -1704,7 +1704,7 @@ window.__ModuleLoader__.load({
           onStarted(data.run)
           // A submitted remake is done: clear the form so the next visit starts empty.
           setBrief(''); setRefAsset(null); setProducts([]); setPreview(null)
-          setSkipConfirm(false)
+          setSkipConfirm(true)
           setPersonaEnabled(false); setPersonaId('')
           setDetected(detectVideoParams('')); setTouched({})
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
@@ -1813,10 +1813,10 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'adp-action-note' },
                   !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
                   h('br'),
-                  skipConfirm ? '已勾选跳过确认：会直接开始生成，不暂停。' : '默认会先停下让你确认提示词，确认后才生成。'
+                  skipConfirm ? '已默认跳过二次确认：提交后直接开始生成；取消勾选可先确认提示词。' : '已取消跳过：提交后先停下让你确认提示词，确认后才生成。'
                 ),
                 h('div', { className: 'adp-grow' }),
-                h('label', { className: 'adp-model-enable', style: { marginRight: 12 }, title: '不勾选：生成前先停下来让你确认提示词；勾选：直接开始生成' },
+                h('label', { className: 'adp-model-enable', style: { marginRight: 12 }, title: '默认勾选：直接开始生成；取消勾选：生成前先停下来让你确认提示词' },
                   h('input', { type: 'checkbox', checked: skipConfirm, onChange: (e) => setSkipConfirm(e.currentTarget.checked) }),
                   '跳过二次确认'
                 ),
