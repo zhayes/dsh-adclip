@@ -193,6 +193,52 @@ def check_llm_ark_first() -> None:
         os.environ["ADSTUDIO_TEXT_PROVIDER"] = "minimax"
 
 
+def check_enablement() -> None:
+    """Activation is the provider's switch; enablement is ours."""
+    os.environ["ARK_API_KEY"] = "test-key"
+    original = ark_text._post
+    ark_text._post = lambda payload, *, timeout=90.0: FakeResponse(200, _chat_payload('{"ok":1}'))
+    try:
+        # Untouched switch: every activated row is a candidate.
+        from adclip import settings
+
+        settings.set_enabled_text_models([])
+        assert ark_text.enabled_ids() == set(), ark_text.enabled_ids()
+        assert ark_text.default_row() is None
+        assert [row["short"] for row in ark_text.enabled_rows()] == []
+        rows = {row["id"]: row for row in ark_text.models()}
+        assert all(row["enabled"] is False for row in rows.values()), rows
+        assert all(row["available"] is False for row in rows.values()), rows
+        assert rows["ark.doubao-seed-2.1-pro"]["reason"] == "已在设置里停用"
+        assert ark_text.vision_models() == []
+        try:
+            ark_text.chat("", [{"role": "user", "content": "x"}], model="ark.doubao-seed-2.1-lite")
+        except ark_text.ArkTextError as exc:
+            assert exc.kind == "disabled", exc.kind
+        else:
+            raise AssertionError("a disabled model must not be called")
+        # The activation probe still works for a disabled model.
+        assert ark_text.probe(["ark.doubao-seed-2.1-lite"])[0]["ok"] is True
+
+        # Partial enablement: only the checked row is used.
+        settings.set_enabled_text_models(["ark.doubao-seed-2.1-lite"])
+        assert ark_text.default_row()["short"] == "lite", ark_text.default_row()
+        assert [row["short"] for row in ark_text.vision_models()] == ["lite"], ark_text.vision_models()
+        assert ark_text.enabled("ark.doubao-seed-2.1-pro") is False
+
+        # Text rows are kept out of the generation registry, enabled or not.
+        assert len(catalog.rows()) == 13
+    finally:
+        ark_text._post = original
+        settings.set_enabled_text_models([])
+        from adclip import settings as settings_mod
+
+        try:
+            settings_mod.MODEL_PREFS.unlink()
+        except OSError:
+            pass
+
+
 def check_vision_chain() -> None:
     os.environ["MINIMAX_API_KEY"] = ""
     os.environ["ADSTUDIO_DSH_CHAT_URL"] = ""
@@ -221,6 +267,7 @@ def main() -> None:
     check_retry_without_thinking()
     check_vision_ark()
     check_llm_ark_first()
+    check_enablement()
     check_vision_chain()
     print("adclip ark text/vision: ok")
 

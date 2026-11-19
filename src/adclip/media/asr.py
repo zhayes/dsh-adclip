@@ -269,7 +269,7 @@ def _cleanup_attempts(system: str, prompt: str, text_model: dict[str, Any] | Non
     if ark_text.available():
         for short in ("lite", "turbo", "pro"):
             row = ark_text.row_for(short)
-            if not row:
+            if not row or not ark_text.enabled(row):
                 continue
 
             def _ark(row: dict[str, Any] = row) -> str:

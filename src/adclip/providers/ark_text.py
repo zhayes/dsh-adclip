@@ -100,6 +100,39 @@ def row_for(model: str) -> dict[str, Any] | None:
     return None
 
 
+def enabled_ids() -> set[str] | None:
+    """Rows the user kept switched on, or None while the switch is untouched.
+
+    An activated model the operator disabled must not be used: activation is the
+    provider's switch, enablement is ours.
+    """
+    from .. import settings
+
+    ids = settings.enabled_text_models()
+    if ids is None:
+        return None
+    owned = {str(row["id"]) for row in ROWS}
+    return {value for value in ids if value in owned}
+
+
+def enabled(row_or_model: Any) -> bool:
+    chosen = enabled_ids()
+    if chosen is None:
+        return True
+    row = row_or_model if isinstance(row_or_model, dict) else row_for(str(row_or_model or ""))
+    return bool(row) and str(row.get("id") or "") in chosen
+
+
+def enabled_rows() -> list[dict[str, Any]]:
+    chosen = enabled_ids()
+    return [row for row in ROWS if chosen is None or str(row["id"]) in chosen]
+
+
+def default_row() -> dict[str, Any] | None:
+    rows = enabled_rows()
+    return rows[0] if rows else None
+
+
 def _state() -> dict[str, dict[str, Any]]:
     data = store.read_json(STATE, {}) or {}
     return data if isinstance(data, dict) else {}
@@ -152,6 +185,15 @@ def models() -> list[dict[str, Any]]:
     for row in ROWS:
         state = status_of(str(row["id"]))
         status = str(state.get("status") or ("unknown" if key_present else "no_key"))
+        on = enabled(row)
+        usable = key_present and status != "not_open" and on
+        reason = ""
+        if not key_present:
+            reason = "未配置 ARK_API_KEY"
+        elif not on:
+            reason = "已在设置里停用"
+        elif status in {"not_open", "error"}:
+            reason = str(state.get("error") or "")
         out.append({
             "id": row["id"],
             "kind": "text",
@@ -165,9 +207,10 @@ def models() -> list[dict[str, Any]]:
             "context": "1M",
             "requires": ["ARK_API_KEY"],
             "endpoint": BASE + "/chat/completions",
-            "available": key_present and status != "not_open",
+            "available": usable,
+            "enabled": on,
             "status": status,
-            "reason": str(state.get("error") or "") if status in {"not_open", "error"} else ("" if key_present else "未配置 ARK_API_KEY"),
+            "reason": reason,
             "checked_at": str(state.get("checked_at") or ""),
         })
     return out
@@ -180,7 +223,7 @@ def vision_models() -> list[dict[str, Any]]:
     out = []
     for item in order:
         row = by_short.get(item) or row_for(item)
-        if row is None:
+        if row is None or not enabled(row):
             continue
         state = status_of(str(row["id"]))
         if str(state.get("status") or "") == "not_open":
@@ -247,13 +290,20 @@ def chat(
     temperature: float = 0.3,
     thinking: bool | None = None,
     timeout: float = 90.0,
+    require_enabled: bool = True,
 ) -> dict[str, Any]:
-    """One Ark chat completion. Returns ``{text, provider, model, usage}``."""
+    """One Ark chat completion. Returns ``{text, provider, model, usage}``.
+
+    ``require_enabled=False`` is for the activation probe: a model the operator
+    switched off still needs its activation state checked.
+    """
     global LAST_ERROR
     LAST_ERROR = ""
     row = row_for(model)
     if row is None:
         raise ArkTextError(f"未知方舟模型：{model}", kind="config", model=model)
+    if require_enabled and not enabled(row):
+        raise ArkTextError(f"方舟模型已在设置里停用：{row['label']}", kind="disabled", model=str(row["id"]))
     payload: dict[str, Any] = {
         "model": model_id(row),
         "messages": ([{"role": "system", "content": system}] if system else []) + list(messages),
@@ -287,7 +337,7 @@ def chat(
 
 def _probe_one(row: dict[str, Any], *, timeout: float) -> dict[str, Any]:
     try:
-        chat("", [{"role": "user", "content": "回复 OK"}], model=str(row["id"]), max_tokens=16, temperature=0.0, thinking=False, timeout=timeout)
+        chat("", [{"role": "user", "content": "回复 OK"}], model=str(row["id"]), max_tokens=16, temperature=0.0, thinking=False, timeout=timeout, require_enabled=False)
         return {"id": str(row["id"]), "ok": True, "status": "ok", "error": ""}
     except ArkTextError as exc:
         return {"id": str(row["id"]), "ok": False, "status": exc.kind, "error": str(exc)}

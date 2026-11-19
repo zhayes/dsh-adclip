@@ -82,14 +82,43 @@ def status() -> list[dict[str, Any]]:
 
 def enabled_models() -> list[str] | None:
     """Return explicitly enabled model ids, or None before the first save."""
+    rows = _prefs().get("enabled_models")
+    if isinstance(rows, list):
+        return [str(x) for x in rows if str(x).strip()]
+    return None
+
+
+def enabled_text_models() -> list[str] | None:
+    """Doubao text/vision rows the user kept on.
+
+    `None` means the user never touched this switch, so every row keeps its old
+    default (on). Once saved, the list is exact — disabling all three really
+    means no Ark text/vision model, and the engine falls back to DSH.
+    """
+    rows = _prefs().get("enabled_text_models")
+    if isinstance(rows, list):
+        return [str(x) for x in rows if str(x).strip()]
+    return None
+
+
+def _prefs() -> dict[str, Any]:
     try:
         data = json.loads(MODEL_PREFS.read_text(encoding="utf-8"))
-        rows = data.get("enabled_models") if isinstance(data, dict) else None
-        if isinstance(rows, list):
-            return [str(x) for x in rows if str(x).strip()]
     except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_prefs(data: dict[str, Any]) -> None:
+    store.ensure_dirs()
+    tmp = MODEL_PREFS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+    os.replace(tmp, MODEL_PREFS)
+    try:
+        os.chmod(MODEL_PREFS, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
         pass
-    return None
 
 
 def model_params() -> dict[str, dict[str, Any]]:
@@ -129,18 +158,25 @@ def set_model_params(model_id: str, values: dict[str, Any]) -> dict[str, Any]:
 
 
 def set_enabled_models(ids: list[str]) -> list[str]:
-    store.ensure_dirs()
-    rows = []
-    for value in ids:
+    rows = _unique(ids)
+    data = _prefs()
+    data["enabled_models"] = rows
+    _write_prefs(data)
+    return rows
+
+
+def set_enabled_text_models(ids: list[str]) -> list[str]:
+    rows = _unique(ids)
+    data = _prefs()
+    data["enabled_text_models"] = rows
+    _write_prefs(data)
+    return rows
+
+
+def _unique(ids: list[str]) -> list[str]:
+    rows: list[str] = []
+    for value in ids or []:
         value = str(value or "").strip()
         if value and value not in rows:
             rows.append(value)
-    tmp = MODEL_PREFS.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"enabled_models": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
-    os.replace(tmp, MODEL_PREFS)
-    try:
-        os.chmod(MODEL_PREFS, stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
-        pass
     return rows

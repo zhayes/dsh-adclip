@@ -821,6 +821,7 @@ window.__ModuleLoader__.load({
         }
       }
       for (const model of textModels || []) {
+        if (model.enabled === false) continue
         rows.push({
           provider: model.provider || 'ark',
           providerName: model.provider === 'ark' ? '火山方舟' : (model.provider || ''),
@@ -2782,7 +2783,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** Doubao-Seed-2.1 rows: capability tags, context, endpoint, activation. */
+    /** Doubao-Seed-2.1 rows: capability tags, context, endpoint, activation, enable. */
     function TextModelsCard({ textModels, onRefresh }) {
       const [busy, setBusy] = useState(false)
       const [note, setNote] = useState('')
@@ -2797,6 +2798,24 @@ window.__ModuleLoader__.load({
           await onRefresh()
         } catch (e) { setNote(String(e.message || e)) } finally { setBusy(false) }
       }
+      const enabledIds = rows.filter((row) => row.enabled !== false).map((row) => row.id)
+      const saveEnabled = async (ids, label) => {
+        setBusy(true); setNote('')
+        try {
+          await api('/settings/text_models', { method: 'POST', body: { enabled: ids } })
+          await onRefresh()
+          setNote(label)
+        } catch (e) { setNote(String(e.message || e)) } finally { setBusy(false) }
+      }
+      const toggle = (model) => {
+        const on = model.enabled === false
+        const next = on ? enabledIds.concat(model.id) : enabledIds.filter((id) => id !== model.id)
+        saveEnabled(next, (on ? '已启用 ' : '已停用 ') + (model.label || model.id))
+      }
+      const allOn = rows.length > 0 && rows.every((row) => row.enabled !== false)
+      const toggleAll = () => {
+        saveEnabled(allOn ? [] : rows.map((row) => row.id), allOn ? '已停用全部文本/视觉模型' : '已启用全部文本/视觉模型')
+      }
       return h('div', { className: 'adp-card adp-col', style: { margin: '4px 0 8px' } },
         h('div', { className: 'adp-row' },
           h('div', null,
@@ -2804,23 +2823,28 @@ window.__ModuleLoader__.load({
             h('div', { className: 'adp-small adp-muted' }, 'Doubao-Seed-2.1 系列 · 用 ARK_API_KEY 直接调 /chat/completions')
           ),
           h('div', { className: 'adp-grow' }),
-          h('button', { className: 'adp-btn ghost', disabled: busy, onClick: probe }, busy ? '检测中…' : '检测开通状态')
+          rows.length ? h('button', { className: 'adp-btn ghost', disabled: busy, onClick: toggleAll }, allOn ? '全不启用' : '全部启用') : null,
+          h('button', { className: 'adp-btn ghost', disabled: busy, onClick: probe }, busy ? '处理中…' : '检测开通状态')
         ),
         rows.length ? rows.map((model) => {
+          const on = model.enabled !== false
           const status = model.status === 'ok' ? 'ok' : (model.available ? 'unknown' : (model.status || 'no_key'))
-          const badge = TEXT_STATUS_LABEL[status] || status
-          return h('div', { key: model.id, className: 'adp-provider-model adp-textmodel-row' },
+          const badge = !on ? '已停用' : (TEXT_STATUS_LABEL[status] || status)
+          return h('div', { key: model.id, className: 'adp-provider-model adp-textmodel-row' + (on ? '' : ' off') },
             h('div', { className: 'adp-grow' },
               h('div', { className: 'adp-provider-model-name' }, model.label || model.id),
               h('div', { className: 'adp-model-tags' }, (model.tags || []).map((tag) => h('span', { key: tag, className: 'adp-model-tag' }, tag))),
               h('div', { className: 'adp-small adp-muted' }, '上下文 ' + (model.context || '—') + ' · ' + (model.endpoint || '') + ' · model=' + (model.ark_model || '')),
               model.reason ? h('div', { className: 'adp-small adp-faint' }, model.reason) : null
             ),
-            h('span', { className: 'adp-badge' + (status === 'ok' ? ' ok' : (status === 'not_open' || status === 'no_key' ? ' warn' : '')) }, badge)
+            h('div', { className: 'adp-row', style: { gap: 10 } },
+              h('span', { className: 'adp-badge' + (!on ? '' : (status === 'ok' ? ' ok' : (status === 'not_open' || status === 'no_key' ? ' warn' : ''))) }, badge),
+              h('label', { className: 'adp-model-enable' }, h('input', { type: 'checkbox', checked: on, disabled: busy, onChange: () => toggle(model), title: '开通之外还要在这里启用才会被使用' }), '启用')
+            )
           )
         }) : h('div', { className: 'adp-small adp-muted' }, '正在读取模型列表…'),
         note ? h('div', { className: 'adp-small adp-muted' }, note) : null,
-        h('div', { className: 'adp-small adp-faint' }, '打开本页会自动检测一次；刚开通时方舟可能要 1–2 分钟同步，未开通时视觉链自动跳到 DSH 视觉桥、文本生成回落到 DSH 模型。')
+        h('div', { className: 'adp-small adp-faint' }, '「已开通」只是方舟侧的状态；这里没勾选就不会被使用：视觉链跳过它，文本生成回落到 DSH 模型。全部停用时同理。')
       )
     }
 

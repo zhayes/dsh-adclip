@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.20` |
-| Python engine (`adclip.api.VERSION`) | `0.1.13` |
+| DSH plugin (`plugin/package.json`) | `0.5.21` |
+| Python engine (`adclip.api.VERSION`) | `0.1.14` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -191,6 +191,13 @@ dist/                      staged plugin artifacts (ignored)
 - Engine routes: `GET /text/models`, `POST /text/chat` (ark only),
   `POST /text/models/probe`. They are reached through the existing
   `/adplus/api/*` proxy, so `plugin/host/proxy.js` needs no change.
+- Activation (`已开通`) and enablement are separate switches. `POST
+  /settings/text_models` persists `enabled_text_models` in `model_prefs.json`;
+  the list is exact, so disabling all three really removes Ark text/vision and
+  the engine falls back to DSH. Before the first save the key is absent and every
+  row stays on. `ark_text.models()`, `vision_models()`, `chat()` and
+  `llm.chat()` all honour it; the activation probe bypasses it on purpose
+  (`require_enabled=False`) so a disabled row can still be checked.
 - `llm.py` order is DSH → MiniMax → Ark by default; an explicit
   `text_model.provider == "ark"` (from `run.advanced.text_model`) puts Ark
   first and falls back to DSH.

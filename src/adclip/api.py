@@ -50,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.13"
+VERSION = "0.1.14"
 
 
 def _media_type(path: Path) -> str:
@@ -181,6 +181,24 @@ def set_settings_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             enabled.append(value)
     settings.set_enabled_models(enabled)
     return {"enabled": enabled, "models": model_catalog.rows()}
+
+
+@app.post("/settings/text_models")
+def set_settings_text_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Enable or disable the Doubao text/vision rows.
+
+    Activation ("已开通") is the provider's switch; this one is ours. A row that
+    is activated but switched off here is never handed to the vision ladder or
+    the text bridge, and the engine falls back to DSH instead.
+    """
+    valid = {str(row["id"]) for row in model_catalog.text_rows()}
+    enabled: list[str] = []
+    for value in payload.get("enabled") or []:
+        value = str(value or "").strip()
+        if value in valid and value not in enabled:
+            enabled.append(value)
+    settings.set_enabled_text_models(enabled)
+    return {"enabled": enabled, "models": model_catalog.text_rows()}
 
 
 @app.get("/models/discover")

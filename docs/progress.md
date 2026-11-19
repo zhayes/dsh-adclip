@@ -1,5 +1,17 @@
 # Progress / handoff
 
+## 文本 / 视觉模型的启用开关
+
+- 「已开通」是方舟侧的开关，「启用」是 AdClip 自己的开关：`POST /settings/text_models`
+  把勾选结果存到 `model_prefs.json` 的 `enabled_text_models`。这份列表是精确的，
+  三个都取消就真的没有 Ark 文本/视觉模型，视觉链跳过它们、文本生成回落到 DSH。
+  从未保存过时该键不存在，三行保持默认全开（不破坏老配置）。
+- `ark_text.models()` 返回 `enabled`，`vision_models()/chat()/llm.chat()` 全部遵守；
+  只有激活探针（`probe`）故意绕过（`require_enabled=False`），这样停用的模型
+  仍然能显示是否开通。`catalog.vision_chain()` 的档位会把停用模型标成不可用，
+  原因写“已在设置里停用”。设置页每一行右侧新增「启用」勾选，卡片头部有全选/全不选。
+- 自由创作的文本模型选择器只列启用中的 Ark 行。
+
 ## 台词时长 / 同音字校对 / 画面文字检查
 
 - **台词时长**：`pipeline/timing.py` 现在是唯一口径。`char_budget()` 给出一个 beat

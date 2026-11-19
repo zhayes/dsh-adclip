@@ -391,6 +391,7 @@ def vision_chain() -> list[dict[str, Any]]:
             "provider": "ark",
             "role": "vision",
             "available": bool(row.get("available")),
+            "enabled": bool(row.get("enabled", True)),
             "reason": ("" if row.get("available") else (row.get("reason") or "未开通")),
             "status": row.get("status") or "",
         })

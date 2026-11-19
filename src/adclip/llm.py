@@ -143,25 +143,35 @@ def _missing_ark_key() -> str:
     raise RuntimeError("未配置 ARK_API_KEY")
 
 
+def _ark_unusable() -> str:
+    raise RuntimeError("方舟文本模型未启用：请在设置里勾选")
+
+
 def chat(system: str, user: str, *, max_tokens: int = 1600, temperature: float = 0.3, text_model: dict[str, str] | None = None) -> str:
     global LAST_ERROR, LAST_MODEL
     LAST_ERROR = ""
     selected = _normalize_text_model(text_model)
-    ark_row = ark_text.row_for(selected["model"]) if selected and selected.get("provider") == "ark" else None
+    selected_ark = ark_text.row_for(selected["model"]) if selected and selected.get("provider") == "ark" else None
+    ark_default = ark_text.default_row()
     steps: list[tuple[str, Any]] = []
-    if TEXT_PROVIDER == "ark" or ark_row is not None:
-        if ark_text.available():
-            row = ark_row or ark_text.row_for("pro")
-            steps.append(("Ark", lambda row=row: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(row["id"]))))
-        else:
+    # A model the operator switched off is not a candidate, even when it is
+    # activated and explicitly selected: enablement beats activation.
+    if TEXT_PROVIDER == "ark" or selected_ark is not None:
+        if not ark_text.available():
             steps.append(("Ark", _missing_ark_key))
+        elif selected_ark is not None and ark_text.enabled(selected_ark):
+            steps.append(("Ark", lambda row=selected_ark: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(row["id"]))))
+        elif ark_default is not None and TEXT_PROVIDER == "ark":
+            steps.append(("Ark", lambda row=ark_default: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(row["id"]))))
+        else:
+            steps.append(("Ark", _ark_unusable))
     if TEXT_PROVIDER in {"auto", "dsh"} or (selected and selected.get("provider") not in {None, "ark"}):
         if DSH_URL:
             steps.append(("DSH", lambda: _chat_dsh(system, user, max_tokens=max_tokens, temperature=temperature, text_model=selected)))
     if TEXT_PROVIDER in {"auto", "minimax"} and os.environ.get("MINIMAX_API_KEY", "").strip():
         steps.append(("MiniMax", lambda: _chat_minimax(system, user, max_tokens=max_tokens, temperature=temperature)))
-    if TEXT_PROVIDER == "auto" and ark_row is None and ark_text.available():
-        steps.append(("Ark", lambda: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(ark_text.row_for("pro")["id"]))))
+    if TEXT_PROVIDER == "auto" and selected_ark is None and ark_default is not None:
+        steps.append(("Ark", lambda row=ark_default: _chat_ark(system, user, max_tokens=max_tokens, temperature=temperature, model=str(row["id"]))))
     errors: list[str] = []
     for label, step in steps:
         try:

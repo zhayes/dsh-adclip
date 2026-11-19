@@ -425,6 +425,7 @@ def manifest(
             "context": row.get("context") or "",
             "endpoint": row.get("endpoint") or "",
             "available": bool(row.get("available")),
+            "enabled": bool(row.get("enabled", True)),
             "status": row.get("status") or "",
             "reason": row.get("reason") or "",
             "checked_at": row.get("checked_at") or "",
@@ -436,6 +437,7 @@ def manifest(
             "label": row.get("label"),
             "provider": row.get("provider"),
             "available": bool(row.get("available")),
+            "enabled": bool(row.get("enabled", True)),
             "reason": row.get("reason") or "",
             "status": row.get("status") or "",
         } for row in vision_chain]
