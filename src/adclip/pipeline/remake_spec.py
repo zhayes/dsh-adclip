@@ -43,14 +43,48 @@ def _merge_to(lines: list[str], count: int) -> list[str]:
     return out
 
 
-def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
-    """New dialogue lines mapped onto time slots.
+def _merge_windows(rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    """Merge adjacent reference windows until there are `count` of them.
 
-    The reference's own ASR windows are the ground truth for rhythm: if the
-    rewrite has one line per reference line, each line keeps the original
-    start/end and is shortened to what that window holds. That copies the
-    original speaker's pauses instead of spreading the text evenly, which used
-    to squeeze the last line into a slot it could not finish.
+    Fewer rewritten lines than reference lines used to re-spread every line
+    across the whole shot, which moved the dialogue off the moment the
+    reference actually spoke. Merging neighbours keeps the analysis edges: a
+    group starts where its first line started and ends where its last ended.
+    """
+    if count <= 0 or len(rows) <= count:
+        return list(rows)
+    cumulative: list[float] = []
+    total = 0.0
+    for row in rows:
+        total += max(0.01, float(row.get("end_s") or 0) - float(row.get("start_s") or 0))
+        cumulative.append(total)
+    cuts: list[int] = []
+    for group in range(1, count):
+        target = total * group / count
+        lowest = cuts[-1] + 1 if cuts else 0
+        highest = len(rows) - (count - group)
+        cuts.append(min(range(lowest, highest), key=lambda index: abs(cumulative[index] - target)))
+    bounds = [*cuts, len(rows) - 1]
+    out: list[dict[str, Any]] = []
+    first = 0
+    for last in bounds:
+        out.append({
+            "start_s": float(rows[first].get("start_s") or 0),
+            "end_s": float(rows[last].get("end_s") or 0),
+        })
+        first = last + 1
+    return out
+
+
+def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
+    """New dialogue lines mapped onto the reference's own time windows.
+
+    The breakdown decides when the reference speaks, so the renderer only maps
+    lines onto those windows: same start/end as the ASR row, clamped to the
+    shot. Nothing is re-spread across the shot and nothing is shortened to
+    "fit" — a window that is genuinely too fast is reported by QA instead, so
+    the times printed in the prompt and the storyboard always match the
+    analysis.
     """
     lines = [str(text).strip() for text in shot.get("lines") or [] if str(text).strip()]
     if not lines:
@@ -60,17 +94,16 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
     rows = shot.get("dialogue_rows") or []
     if rows and len(lines) > len(rows):
         lines = _merge_to(lines, len(rows))
+    if rows:
+        rows = _merge_windows(rows, len(lines))
     if len(rows) == len(lines) and rows:
         aligned: list[dict[str, Any]] = []
         for line, row in zip(lines, rows):
             row_start = max(start_s, float(row.get("start_s") or 0))
-            row_end = min(end_s - timing.TAIL_S, float(row.get("end_s") or 0))
+            row_end = min(end_s, float(row.get("end_s") or 0))
             if row_end - row_start < 0.4:
-                row_end = min(end_s - timing.TAIL_S, row_start + 0.4)
+                row_end = min(end_s, row_start + 0.4)
             window = max(0.4, row_end - row_start)
-            # Keep the wording intact: squeezing it to "fit" is what changed
-            # sentences the operator never asked to change. QA reports a slot
-            # that is genuinely too short instead of hiding it.
             aligned.append({
                 "start_s": round(row_start, 2),
                 "end_s": round(row_end, 2),
@@ -80,7 +113,7 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
             })
         if all(item["end_s"] > item["start_s"] for item in aligned):
             return aligned
-    # Line count differs from the reference: fall back to an even spread.
+    # No reference dialogue at all: place the lines inside the shot.
     lines, _ = timing.fit_lines(
         lines, timing.speak_span(end_s - start_s), cps=timing.MAX_CPS, grace=timing.GRACE
     )
@@ -174,41 +207,46 @@ def _camera_label(shot: dict[str, Any]) -> str:
     )
 
 
-def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool) -> list[str]:
-    """One shot as the breakdown described it: camera, scene, action, framing.
+def _stamp(seconds: float) -> str:
+    total = max(0.0, float(seconds))
+    return f"{int(total // 60):02d}:{total % 60:05.2f}"
 
-    The analysis is the only grounded description of the reference, so it is
-    carried shot by shot instead of being averaged into one global line: a
-    two-shot reference often changes scene, lens and framing between cuts.
+
+def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool) -> list[str]:
+    """One shot as the breakdown described it, in the shape models read best.
+
+    A single flowing 画面 paragraph plus a timestamped dialogue list is what a
+    hand-written prompt looks like, and the model paces the speech itself from
+    the timestamps. Splitting the description into many labelled lines and
+    adding pace arithmetic only gave the model more to contradict.
     """
-    span = f"{float(shot.get('start_s') or 0):.1f}–{float(shot.get('end_s') or 0):.1f}s"
+    start = float(shot.get("start_s") or 0)
+    end = float(shot.get("end_s") or 0)
     camera = _camera_label(shot)
-    lines = [f"【镜头{index + 1}】{span}" + ("｜" + camera if camera else "")]
-    if shot.get("scene"):
-        lines.append("场景：" + str(shot["scene"]))
-    action = str(shot.get("reference_action") or shot.get("action") or "").strip()
-    if action:
-        lines.append("动作：" + action)
-    if shot.get("composition"):
-        lines.append("构图：" + str(shot["composition"]))
-    if shot.get("expression"):
-        lines.append("表情：" + str(shot["expression"]))
-    tone = str(shot.get("tone") or "").strip()
-    pace_label = timing.pace_label(shot.get("pace_cps"))
-    delivery = "；".join(value for value in (tone, ("语速" + pace_label) if pace_label else "") if value)
-    if delivery:
-        lines.append("语气：" + delivery)
-    if shot.get("continuity") and str(shot["continuity"]) not in {"不确定", "unknown"}:
-        lines.append("衔接：" + str(shot["continuity"]))
-    if index > 0 and str(shot.get("transition_in") or "cut") == "cut":
-        lines.append("转场：从上个镜头硬切")
+    lines = [f"【镜头 {index + 1}｜{start:.2f}–{end:.2f}s｜{end - start:.2f}s】" + (f"　{camera}" if camera else "")]
+    visual = [value for value in (
+        str(shot.get("scene") or "").strip(),
+        str(shot.get("reference_action") or shot.get("action") or "").strip(),
+        str(shot.get("composition") or "").strip(),
+    ) if value]
+    if visual:
+        lines.append("画面：" + "，".join(visual) + "。")
+    acting = [value for value in (
+        str(shot.get("expression") or "").strip(),
+        str(shot.get("tone") or "").strip(),
+    ) if value]
+    if acting:
+        lines.append("表演：" + "；".join(acting) + "。")
     cast = [str(item.get("description") or "").strip() for item in shot.get("cast") or [] if str(item.get("description") or "").strip()]
     if cast and not persona and not people_replaced:
-        lines.append("人物：" + "、".join(dict.fromkeys(cast[:3])))
-    for row in shot.get("timed_lines") or []:
-        lines.append(
-            f"台词 [{float(row['start_s']):.1f}–{float(row['end_s']):.1f}s] {row['text']}"
-        )
+        lines.append("人物：" + "、".join(dict.fromkeys(cast[:3])) + "。")
+    if index > 0 and str(shot.get("transition_in") or "cut") == "cut":
+        lines.append("转场：从上个镜头硬切。")
+    rows = shot.get("timed_lines") or []
+    if rows:
+        lines.append("台词（必须与画面动作、口型同步）：")
+        for row in rows:
+            lines.append(f"[{_stamp(row['start_s'])}–{_stamp(row['end_s'])}] {row['text']}")
     return lines
 
 
@@ -273,26 +311,13 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
         row for shot in shots for row in (shot.get("timed_lines") or [])
     ]
     if dialogue:
-        head.append(
-            f"【台词要求】共 {len(dialogue)} 句，必须逐句完整念完，不得省略、合并或改写；"
-            "标准普通话，同一时间只有一个人说话；句间只留约 0.1 秒换气，"
-            "不要出现明显空白或静音段；镜头切换处不要停，上一句说完直接切。"
-        )
-        pace = (spec.get("global") or {}).get("pace_cps")
-        if pace:
-            label = timing.pace_label(pace)
-            head.append(
-                f"【语速】原片约每秒 {float(pace):.1f} 个字" + (f"，{label}" if label else "")
-                + "；用同样的语气和节奏复刻，不要拖慢也不要像播报员念稿。"
-            )
-        else:
-            head.append("【语速】按参考片的节奏念，不要拖慢也不要像播报员念稿。")
-        head.append("严格贴着每句标注的起止时间；句子还没念完不要切走。")
+        # Keep this short. The working hand-written prompts state nothing but
+        # the timestamped lines; the model paces itself from them. Pace math in
+        # the prompt only gave it something to contradict.
+        head.append(f"【台词】共 {len(dialogue)} 句，按上面的时间与顺序说完，不要省略、合并或提前收尾。")
         prices = [str(value) for value in req.get("prices") or []]
         if prices:
             head.append("必须清楚说出价格：" + "、".join(prices) + "。")
-        if duration:
-            head.append(f"全部台词必须在约 {max(0.5, duration - 0.3):.1f} 秒前说完；说完后不要留长时间空白画面。")
     if audio.get("no_bgm"):
         head.append("【音频】无背景音乐；只有人物同期声；环境音可选且音量低于人声。")
 

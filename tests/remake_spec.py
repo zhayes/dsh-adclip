@@ -114,21 +114,25 @@ def check_generation_prompt() -> None:
     text = remake_spec.render_generation(spec)
     for line in ("家人们看过来", "鱿鱼须到手49块8"):
         assert line in text, text
-    assert "0.0–" in text or "0.0-" in text, text
+    assert "00:00.40–" in text, text
     assert "49块8" in text, text
     assert "鱿鱼须" in text, text
     assert "折叠椅" not in text, "the reference product name must not leak into a replacement prompt"
     assert "竖屏" in text, text
     assert "一次连续拍摄" in text, text
     assert "广告大字报" in text, text
-    assert "必须逐句完整念完" in text, text
+    # The prompt reads like a hand-written one: per-shot header, one flowing
+    # visual paragraph, and a timestamped dialogue list. Pace arithmetic was
+    # removed — the model paces itself from the timestamps.
+    assert "【镜头 1｜" in text, text
+    assert "画面：" in text, text
+    assert "台词（必须与画面动作、口型同步）：" in text, text
+    assert "[00:00.40–" in text, text
+    assert "【台词】共" in text, text
     assert "不得漏句" in text, text
     assert "水印" not in text, "watermark suppression belongs to the provider parameter, not the prompt"
-    assert "每秒 4 个字念" not in text, text
-    assert "【语速】原片约每秒" in text, text
-    assert "严格贴着每句标注的起止时间" in text, text
-    assert "不要出现明显空白或静音段" in text, text
-    assert "秒前说完" in text, text
+    assert "语速" not in text, text
+    assert "秒前说完" not in text, text
     assert len(text) <= 3500, len(text)
 
     wide = remake_spec.render_generation(remake_spec.build_spec(_run(aspect="16:9"), _skeleton("16:9"), _script()))
@@ -153,8 +157,8 @@ def check_multi_shot_prompt() -> None:
     assert "一次连续拍摄" not in text, text
 
 
-def check_timed_lines_fit() -> None:
-    """Every rendered slot is long enough to actually say the line."""
+def check_timed_lines_follow_analysis() -> None:
+    """Line windows stay on the analysis windows, tight or not."""
     from adclip.pipeline import timing
 
     skeleton = _skeleton()
@@ -163,9 +167,13 @@ def check_timed_lines_fit() -> None:
     spec = remake_spec.build_spec(_run(), skeleton, script)
     rows = spec["shots"][0]["timed_lines"]
     assert len(rows) == 1, rows
-    span = rows[0]["end_s"] - rows[0]["start_s"]
-    assert span >= timing.speak_seconds(rows[0]["text"], timing.MAX_CPS) - 1e-6, rows
-    assert rows[0]["end_s"] <= 11.2 - timing.TAIL_S + 1e-6, rows
+    # One rewritten line, two reference windows: the merged slot keeps the
+    # analysis edges instead of spreading over the whole 11.2s shot.
+    assert (rows[0]["start_s"], rows[0]["end_s"]) == (0.4, 5.0), rows
+    # 30 characters do not fit 4.6s even at the physical ceiling. That is
+    # reported (QA `dialogue_timing`), not hidden by inventing new times.
+    assert rows[0]["needs_s"] > rows[0]["window_s"], rows
+    assert timing.speak_seconds(rows[0]["text"], timing.MAX_CPS) > rows[0]["window_s"], rows
 
 
 def check_delivery() -> None:
@@ -175,11 +183,7 @@ def check_delivery() -> None:
     skeleton["remake_plan"]["shots"][0]["tone"] = "夸张叫卖"
     skeleton["remake_plan"]["shots"][0]["pace_cps"] = 6.0
     text = remake_spec.render_generation(remake_spec.build_spec(_run(), skeleton, _script()))
-    assert "表情：夸张瞪眼、得意" in text, text
-    assert "语气：夸张叫卖" in text, text
-    # The reference rows are 15 chars in 2.6s, so the pace label is not "normal".
-    assert "语速偏快" in text, text
-    assert "【语速】原片约每秒" in text, text
+    assert "表演：夸张瞪眼、得意；夸张叫卖。" in text, text
 
 
 def check_reference_prompt() -> None:
@@ -207,7 +211,7 @@ def main() -> None:
     check_requirements()
     check_spec()
     check_generation_prompt()
-    check_timed_lines_fit()
+    check_timed_lines_follow_analysis()
     check_delivery()
     check_multi_shot_prompt()
     check_reference_prompt()

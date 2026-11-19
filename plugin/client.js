@@ -481,6 +481,8 @@ window.__ModuleLoader__.load({
 .adp-drawer-body{display:flex;flex-direction:column;gap:14px;padding:16px;overflow:auto}
 .adp-drawer-body .adp-select{width:100%;height:34px}
 .adp-drawer-foot{margin-top:auto;display:flex;justify-content:flex-end;gap:8px;padding:14px 16px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+.adp-prompt-modal{width:min(820px,94vw)}
+.adp-prompt-modal .adp-modal-body textarea{width:100%;min-height:320px;resize:vertical;font-family:inherit;font-size:12px;line-height:1.6}
 .adp-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background .15s ease,color .15s ease,transform .15s ease}
 .adp-icon-btn:hover{color:#E2B96F;background:rgba(201,155,84,.12);transform:translateY(-1px)}
 @media(hover:none){.adp-media .adp-remove{opacity:1}}
@@ -1165,6 +1167,7 @@ window.__ModuleLoader__.load({
       const h3Mode = (run.selection || {}).mode === 'h3_reference'
       const running = run.status === 'running' || run.status === 'queued'
       const awaiting = run.status === 'awaiting_confirm'
+      const [confirmOpen, setConfirmOpen] = useState(awaiting)
       const editDirty = edit.aspect !== (adv.aspect || '9:16') || edit.resolution !== (adv.resolution || '720p') || Number(edit.duration) !== Number(adv.duration || 12)
       const hasEdits = (run.segment_edits || []).length > 0
 
@@ -1173,6 +1176,11 @@ window.__ModuleLoader__.load({
         setPromptOpen(false); setPromptText(''); setPromptMeta(null); setPromptBusy(''); setPromptSaved(false)
         setEdit({ aspect: adv.aspect || '9:16', resolution: adv.resolution || '720p', duration: adv.duration || 12 })
       }, [run.id])
+
+      // The confirmation is the whole point of this state: open the editor as
+      // soon as the run parks, and again if the card is clicked later.
+      useEffect(() => { setConfirmOpen(run.status === 'awaiting_confirm') }, [run.id, run.status])
+      useEffect(() => { if (confirmOpen && awaiting) void loadPrompt() }, [confirmOpen, awaiting, run.id])
 
       const loadPrompt = useCallback(async () => {
         setPromptBusy('load'); setErr('')
@@ -1221,7 +1229,13 @@ window.__ModuleLoader__.load({
       const confirmRun = async () => {
         setBusy('confirm'); setErr('')
         try {
+          const edited = String(promptText || '').trim()
+          const original = String((promptMeta && promptMeta.text) || '').trim()
+          if (edited && edited !== original) {
+            await api('/runs/' + run.id + '/prompt-override', { method: 'POST', body: { text: edited } })
+          }
           const data = await api('/runs/' + run.id + '/confirm', { method: 'POST' })
+          setConfirmOpen(false)
           onChanged && onChanged(data.run)
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
       }
@@ -1361,15 +1375,14 @@ window.__ModuleLoader__.load({
             h('b', null, '提示词已生成，等待你确认'),
             h('span', { className: 'adp-confirm-tag' }, 'AWAITING CONFIRM')
           ),
-          h('div', { className: 'adp-confirm-brief' }, '拆解和台词都已完成。确认后才会调用视频模型（消耗一次生成）；可先预览并按需修改。'),
+          h('div', { className: 'adp-confirm-brief' }, '拆解和台词都已完成。确认后才会调用视频模型（消耗一次生成）。'),
           h('div', { className: 'adp-confirm-actions' },
-            h('button', { className: 'adp-btn ghost', onClick: () => setPromptOpen(true) }, promptOpen ? '提示词已展开' : '预览提示词'),
-            h('button', { className: 'adp-btn primary', onClick: confirmRun, disabled: busy === 'confirm' }, busy === 'confirm' ? '提交中…' : '确认并开始生成')
+            h('button', { className: 'adp-btn primary', onClick: () => setConfirmOpen(true) }, '查看并确认提示词')
           )
         ) : null,
         h('div', { className: 'adp-result-grid' },
           h('div', { className: 'adp-stage' },
-            video ? h('video', { className: 'adp-stage-video', src: video, controls: true, playsInline: true, poster: storyboard[0] && storyboard[0].thumbnail ? mediaUrlVersion(storyboard[0].thumbnail, run.version) : undefined }) : h('div', { className: 'adp-empty-stage' }, running ? '正在生成…' : '还没有可播放的成片'),
+            video ? h('video', { className: 'adp-stage-video', src: video, controls: true, playsInline: true, poster: storyboard[0] && storyboard[0].thumbnail ? mediaUrlVersion(storyboard[0].thumbnail, run.version) : undefined }) : h('div', { className: 'adp-empty-stage' }, awaiting ? '等待确认提示词…' : (running ? '正在生成…' : '还没有可播放的成片')),
             running ? h('div', { className: 'adp-stage-progress' }, h('div', { className: 'adp-progress' }, h('i', { style: { width: Math.round((run.progress || 0) * 100) + '%' } })), h('span', null, '生成中 · ' + Math.round((run.progress || 0) * 100) + '%')) : null
           ),
           h('aside', { className: 'adp-result-side' },
@@ -1377,10 +1390,10 @@ window.__ModuleLoader__.load({
               h('div', { className: 'adp-side-label' }, '成片操作'),
               h('div', { className: 'adp-action-list' },
                 h('button', { className: 'adp-action', onClick: openEdit, disabled: running || !video, title: '调整比例、清晰度或时长，生成新版本' }, h(Glyph, { name: 'edit' }), h('span', null, '修改参数')),
-                h('button', { className: 'adp-action', onClick: retry, disabled: running || busy === 'retry', title: '保持当前参数，再生成一条' }, h(Glyph, { name: 'refresh' }), h('span', null, busy === 'retry' ? '提交中…' : '再生成')),
+                h('button', { className: 'adp-action', onClick: retry, disabled: running || awaiting || busy === 'retry', title: '保持当前参数，再生成一条' }, h(Glyph, { name: 'refresh' }), h('span', null, busy === 'retry' ? '提交中…' : '再生成')),
                 h('button', { className: 'adp-action', onClick: download, disabled: !video || busy === 'download', title: '下载成片与字幕压缩包' }, h(Glyph, { name: 'download' }), h('span', null, busy === 'download' ? '打包中…' : '下载')),
                 hasEdits ? h('button', { className: 'adp-action', onClick: rollback, disabled: running || busy === 'rollback', title: '回滚上一次分镜替换' }, h(Glyph, { name: 'undo' }), h('span', null, busy === 'rollback' ? '回滚中…' : '回滚上一镜')) : null,
-                running ? h('button', { className: 'adp-action danger', onClick: cancel }, h(Glyph, { name: 'close' }), h('span', null, '取消生成')) : null
+                (running || awaiting) ? h('button', { className: 'adp-action danger', onClick: cancel }, h(Glyph, { name: 'close' }), h('span', null, awaiting ? '取消这次任务' : '取消生成')) : null
               ),
               h('div', { className: 'adp-side-note' }, '「再生成」保设置换一条；「修改参数」改设置生成新版本；单镜编辑只重做该镜并可直接回滚。')
             ),
@@ -1404,7 +1417,7 @@ window.__ModuleLoader__.load({
             result.post_notes && result.post_notes.length ? h('div', { className: 'adp-side-block' }, h('div', { className: 'adp-side-label' }, '后期说明'), h('div', { className: 'adp-side-note' }, result.post_notes.join(' · '))) : null
           )
         ),
-        h('section', { className: 'adp-inputs' },
+        awaiting ? null : h('section', { className: 'adp-inputs' },
           h('div', { className: 'adp-inputs-head' },
             h('div', { className: 'adp-h2' }, '创作输入'),
             h('span', { className: 'adp-storyboard-meta' }, '保留原始需求，方便复现和追溯')
@@ -1465,7 +1478,7 @@ window.__ModuleLoader__.load({
             (analysis.analysis && analysis.analysis.reason) ? h('div', { className: 'adp-small adp-muted' }, analysis.analysis.reason) : null
           )
         ) : null,
-        h('section', { className: 'adp-storyboard' },
+        awaiting ? null : h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '分镜'),
             h('span', { className: 'adp-storyboard-meta' }, storyboard.length ? storyboard.length + ' 段' : (running ? '生成中…' : (busy === 'sb' ? '读取中…' : '还没有分镜')))
@@ -1513,7 +1526,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'adp-empty-shots' }, h('span', null, '正在分析镜头、场景与台词，完成后自动出现。'))
         ) : null,
-        run.scenario === 'viral-remake' && analysis && analysis.available ? h('section', { className: 'adp-storyboard' },
+        run.scenario === 'viral-remake' && !awaiting && analysis && analysis.available ? h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '生成提示词'),
             h('div', { className: 'adp-row', style: { gap: 10, alignItems: 'center' } },
@@ -1540,6 +1553,34 @@ window.__ModuleLoader__.load({
             ),
             h('div', { className: 'adp-small adp-muted' }, '「重新生成」会按当前文字提交一次新的生成（产生一次费用）；「仅保存」不生成。留空保存则恢复自动渲染，修改不会改动拆解结果。')
           ) : null
+        ) : null,
+        awaiting && confirmOpen ? h('div', { className: 'adp-modal-backdrop', onClick: () => setConfirmOpen(false) },
+          h('div', { className: 'adp-modal adp-prompt-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '确认提示词', onClick: (e) => e.stopPropagation() },
+            h('div', { className: 'adp-modal-head' },
+              h('div', null,
+                h('div', { className: 'adp-h2' }, '确认提示词'),
+                h('div', { className: 'adp-small adp-muted' },
+                  promptMeta ? [promptMeta.mode || 'generation', promptMeta.shots + ' 镜', promptMeta.lines + ' 句台词', promptMeta.chars + ' 字'].join(' · ') : '读取中…'
+                )
+              ),
+              h('button', { className: 'adp-icon-btn', onClick: () => setConfirmOpen(false), title: '关闭' }, h(Glyph, { name: 'close' }))
+            ),
+            h('div', { className: 'adp-modal-body' },
+              h('textarea', {
+                className: 'adp-input',
+                value: promptText,
+                placeholder: promptBusy === 'load' ? '提示词读取中…' : '提示词',
+                onChange: (e) => { setPromptText(e.currentTarget.value); setPromptSaved(false) },
+              }),
+              h('div', { className: 'adp-small adp-muted' }, '确认后才会调用视频模型（消耗一次生成）。可直接改文字，点确认就按改后的内容生成。'),
+              promptBusy === 'load' ? h('div', { className: 'adp-small adp-muted' }, '正在读取提示词…') : null
+            ),
+            h('div', { className: 'adp-modal-foot' },
+              h('button', { className: 'adp-btn ghost', onClick: copyPrompt }, '复制'),
+              h('button', { className: 'adp-btn', onClick: () => setConfirmOpen(false) }, '稍后再说'),
+              h('button', { className: 'adp-btn primary', onClick: confirmRun, disabled: busy === 'confirm' || promptBusy === 'load' }, busy === 'confirm' ? '提交中…' : '确认并开始生成')
+            )
+          )
         ) : null,
         err ? h('div', { className: 'adp-result-error' }, err) : null,
         run.last_edit_error ? h('div', { className: 'adp-result-error', style: { color: '#C99B54' } }, '上次单镜编辑失败：' + String(run.last_edit_error).slice(0, 300) + '（原成片未受影响）') : null,
