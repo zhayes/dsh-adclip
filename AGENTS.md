@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.32` |
-| Python engine (`adclip.api.VERSION`) | `0.1.24` |
+| DSH plugin (`plugin/package.json`) | `0.5.35` |
+| Python engine (`adclip.api.VERSION`) | `0.1.27` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -130,6 +130,15 @@ dist/                      staged plugin artifacts (ignored)
 - Remake duration/aspect are automatic: the engine probes the actual source,
   updates `Run.selection` after analysis, and post trims the output to the
   reference duration/aspect. Do not reintroduce a manual duration/aspect drift.
+- Post does **not** trim the clip length (`pipeline/post.py`). Providers round a
+  reference duration up to their discrete grid (11.07s -> request 12s) and the
+  model paces the whole clip, so the last sentence routinely ends after the
+  reference's final frame; cutting back to the reference length is what chopped
+  the end of "现在只要七十多". The final keeps the model's own length, only
+  frame size/fps are normalized, and a note in `result.warnings` explains the
+  difference from the reference (the result page shows it under 「生成说明」).
+  QA's 「时长」 check compares against the requested duration for the same
+  reason. Do not reintroduce a reference-length trim.
 - Storyboard edit for H3 creates a **new derived run** with the shot
   instruction in `explicit_overrides`; it never mutates the successful parent.
 - Non-H3 storyboard edit/replace is transactional: failure restores the prior

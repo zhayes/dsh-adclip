@@ -233,14 +233,22 @@ def check(run_id: str) -> dict[str, Any]:
     skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
     selection = getattr(run, "selection", None) or {}
     source_duration = (skeleton.get("source") or {}).get("duration_s")
-    target = float(source_duration or advanced.get("duration") or 12)
+    # Post keeps whatever length the model delivered (its pacing drifts with the
+    # product copy), so compare against the duration we asked the provider for,
+    # not the reference's exact length.
+    requested = (selection.get("params") or {}).get("duration")
+    try:
+        target = float(requested) if requested not in (None, "", "reference") else None
+    except (TypeError, ValueError):
+        target = None
+    target = target or float(source_duration or advanced.get("duration") or 12)
     checks = []
 
     def add(cid: str, label: str, status: str, value: Any, note: str = "") -> None:
         checks.append({"id": cid, "label": label, "status": status, "value": value, "note": note})
 
     delta = round(float(facts["duration_s"]) - target, 2)
-    add("duration", "时长", "pass" if abs(delta) <= max(0.5, target * 0.1) else "warn", {"final_s": facts["duration_s"], "target_s": target, "delta_s": delta})
+    add("duration", "时长", "pass" if abs(delta) <= max(0.5, target * 0.1) else "warn", {"final_s": facts["duration_s"], "target_s": target, "reference_s": source_duration, "delta_s": delta})
     expected_aspect = str((skeleton.get("source") or {}).get("aspect") or advanced.get("aspect") or "9:16")
     actual_aspect = "9:16" if facts.get("height", 0) > facts.get("width", 0) * 1.15 else ("16:9" if facts.get("width", 0) > facts.get("height", 0) * 1.15 else "1:1")
     add("aspect", "画幅", "pass" if actual_aspect == expected_aspect else "warn", {"width": facts.get("width"), "height": facts.get("height"), "expected": expected_aspect, "actual": actual_aspect})

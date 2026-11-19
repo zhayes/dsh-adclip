@@ -32,9 +32,19 @@ def post(run_id: str) -> dict[str, Any]:
             duration = None
     width, height = params.size_for(aspect, str(advanced.get("resolution") or "720p"))
     final = store.run_artifact(run_id, "final.mp4")
-    ffmpeg.normalize(raw, final, width=width, height=height, fps=int(advanced.get("fps") or 30), duration=duration)
-    audio_source = None
     warnings: list[str] = []
+    # Keep the clip length the model delivered. Product names and prices have
+    # different character counts, so the model's pacing drifts from the
+    # reference; cutting back to the reference duration is exactly what lopped
+    # the end off "现在只要七十多". Only frame size and fps are normalized.
+    ffmpeg.normalize(raw, final, width=width, height=height, fps=int(advanced.get("fps") or 30))
+    if duration:
+        final_s = float(ffmpeg.probe(final).get("duration_s") or 0)
+        if abs(final_s - duration) > 0.3:
+            warnings.append(
+                f"成片 {final_s:.2f}s（参考片 {duration:.2f}s）：按模型实际输出保留，未做时长裁剪"
+            )
+    audio_source = None
     audio_mode = str(advanced.get("audio_mode") or "regenerate")
     replace_scope = str(advanced.get("replace_scope") or "both")
     if selection.get("mode") == "h3_reference":

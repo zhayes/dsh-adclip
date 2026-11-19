@@ -98,9 +98,15 @@ def _timed_lines(shot: dict[str, Any]) -> list[dict[str, Any]]:
         rows = _merge_windows(rows, len(lines))
     if len(rows) == len(lines) and rows:
         aligned: list[dict[str, Any]] = []
-        for line, row in zip(lines, rows):
+        for index, (line, row) in enumerate(zip(lines, rows)):
             row_start = max(start_s, float(row.get("start_s") or 0))
-            row_end = min(end_s, float(row.get("end_s") or 0))
+            if index == len(rows) - 1:
+                # The last line may use everything up to the cut. The reference
+                # usually leaves a breath at the end of the shot, and the model
+                # needs that room far more than we need a silent tail.
+                row_end = end_s
+            else:
+                row_end = min(end_s, float(row.get("end_s") or 0))
             if row_end - row_start < 0.4:
                 row_end = min(end_s, row_start + 0.4)
             window = max(0.4, row_end - row_start)

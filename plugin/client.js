@@ -1167,6 +1167,10 @@ window.__ModuleLoader__.load({
       const h3Mode = (run.selection || {}).mode === 'h3_reference'
       const running = run.status === 'running' || run.status === 'queued'
       const awaiting = run.status === 'awaiting_confirm'
+      // Confirming the prompt and generating the video are one stage: the page
+      // shows the reference breakdown plus the progress hint, not the storyboard
+      // or the rendered prompt (those belong to the finished clip).
+      const detailReady = !awaiting && !running
       const [confirmOpen, setConfirmOpen] = useState(awaiting)
       const editDirty = edit.aspect !== (adv.aspect || '9:16') || edit.resolution !== (adv.resolution || '720p') || Number(edit.duration) !== Number(adv.duration || 12)
       const hasEdits = (run.segment_edits || []).length > 0
@@ -1254,7 +1258,7 @@ window.__ModuleLoader__.load({
         if (run.scenario !== 'viral-remake') return
         try { setAnalysis(await api('/runs/' + run.id + '/analysis')) } catch { setAnalysis(null) }
       }, [run.id, run.scenario])
-      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video) || run.status === 'awaiting_confirm') void loadAnalysis() }, [run.status, run.result, run.version, loadAnalysis])
+      useEffect(() => { if (run.status === 'succeeded' || (run.result && run.result.video) || run.status === 'awaiting_confirm' || run.status === 'running') void loadAnalysis() }, [run.status, run.result, run.version, loadAnalysis])
 
       const openEdit = () => {
         setEdit({ aspect: adv.aspect || '9:16', resolution: adv.resolution || '720p', duration: adv.duration || 12 })
@@ -1414,6 +1418,10 @@ window.__ModuleLoader__.load({
               qaNotes.map((c) => h('div', { key: c.id, className: 'adp-qa-note' }, c.label + '：' + c.status + (c.note ? ' · ' + c.note : ''))),
               qaVoiceChecked ? null : h('div', { className: 'adp-qa-note' }, '未安装语音识别，口播与需求校验已折叠（安装后可自动核对）')
             ) : null,
+            (result.warnings || []).length ? h('div', { className: 'adp-side-block' },
+              h('div', { className: 'adp-side-label' }, '生成说明'),
+              (result.warnings || []).map((warning, index) => h('div', { key: 'warn-' + index, className: 'adp-qa-note' }, warning))
+            ) : null,
             result.post_notes && result.post_notes.length ? h('div', { className: 'adp-side-block' }, h('div', { className: 'adp-side-label' }, '后期说明'), h('div', { className: 'adp-side-note' }, result.post_notes.join(' · '))) : null
           )
         ),
@@ -1478,7 +1486,7 @@ window.__ModuleLoader__.load({
             (analysis.analysis && analysis.analysis.reason) ? h('div', { className: 'adp-small adp-muted' }, analysis.analysis.reason) : null
           )
         ) : null,
-        awaiting ? null : h('section', { className: 'adp-storyboard' },
+        detailReady ? h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '分镜'),
             h('span', { className: 'adp-storyboard-meta' }, storyboard.length ? storyboard.length + ' 段' : (running ? '生成中…' : (busy === 'sb' ? '读取中…' : '还没有分镜')))
@@ -1518,15 +1526,15 @@ window.__ModuleLoader__.load({
             h('span', null, running ? '正在生成，分镜稍后出现…' : (busy === 'sb' ? '正在读取分镜…' : '还没有分镜数据。')),
             !busy && !running ? h('button', { className: 'adp-btn ghost', onClick: loadSb }, '重新读取') : null
           )
-        ),
-        run.scenario === 'viral-remake' && !running && !(analysis && analysis.available) ? h('section', { className: 'adp-inputs' },
+        ) : null,
+        run.scenario === 'viral-remake' && !(analysis && analysis.available) ? h('section', { className: 'adp-inputs' },
           h('div', { className: 'adp-inputs-head' },
             h('div', { className: 'adp-h2' }, '参考片拆解'),
             h('span', { className: 'adp-storyboard-meta' }, '拆解中…')
           ),
           h('div', { className: 'adp-empty-shots' }, h('span', null, '正在分析镜头、场景与台词，完成后自动出现。'))
         ) : null,
-        run.scenario === 'viral-remake' && !awaiting && analysis && analysis.available ? h('section', { className: 'adp-storyboard' },
+        run.scenario === 'viral-remake' && detailReady && analysis && analysis.available ? h('section', { className: 'adp-storyboard' },
           h('div', { className: 'adp-storyboard-head' },
             h('div', { className: 'adp-h2' }, '生成提示词'),
             h('div', { className: 'adp-row', style: { gap: 10, alignItems: 'center' } },
