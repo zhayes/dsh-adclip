@@ -76,6 +76,42 @@ def check_rewrite() -> None:
     assert not plain["changes"] and plain["questions"], plain
 
 
+def check_rewrite_in_place() -> None:
+    """With reference lines, the script rewrites one line per reference line."""
+    beats = [
+        {"id": "b0", "start_s": 0.0, "end_s": 4.5, "len_s": 4.5, "function": "hook",
+         "dialogue_rows": [{"start_s": 0.0, "end_s": 4.5, "text": "冬天如果你盖了我家这床被子还冷的话，我亲自去给你暖被窝。"}],
+         "visual": {"action": "抱被子"}},
+        {"id": "b1", "start_s": 4.5, "end_s": 11.1, "len_s": 6.6, "function": "setup",
+         "dialogue_rows": [
+             {"start_s": 4.5, "end_s": 5.5, "text": "你们都在抢啊？"},
+             {"start_s": 5.5, "end_s": 7.5, "text": "抢这个厚实又暖和的云朵冬被呢？"},
+             {"start_s": 7.5, "end_s": 10.5, "text": "系统标错了，原本要卖两百多的，现在只要四十多。"},
+         ], "visual": {"action": "抱紧被子"}},
+    ]
+    skeleton = {"beats": beats, "source": {"duration_s": 11.1, "aspect": "9:16"}}
+    script.llm.chat_json = lambda *a, **k: {"beats": [
+        {"id": "b0", "lines": [{"speaker": "A", "text": "冬天盖豆豆云朵被还冷，我亲自给你暖被窝"}]},
+        {"id": "b1", "lines": [
+            {"speaker": "A", "text": "都在抢啊"},
+            {"speaker": "B", "text": "抢豆豆云朵被呢"},
+            {"speaker": "A", "text": "系统标错了，现在只要七十多"},
+        ]},
+    ]}
+    run = SimpleNamespace(scenario="viral-remake", inputs={"brief": BRIEF}, advanced={})
+    doc = script.build_script(run, skeleton, {"must_keep": []})
+    assert doc["source"]["line_review"] == "rewrite-in-place", doc["source"]
+    assert [len(beat["lines"]) for beat in doc["beats"]] == [1, 3], doc["beats"]
+    assert doc["beats"][1]["lines"][-1]["text"] == "系统标错了，现在只要七十多", doc["beats"][1]
+
+    # A count mismatch falls back to the free-generation path instead of
+    # re-spreading the reference rhythm.
+    script.llm.chat_json = lambda *a, **k: {"beats": [{"id": "b1", "lines": [{"speaker": "A", "text": "只剩一句"}]}]}
+    fallback = script.build_script(run, skeleton, {"must_keep": []})
+    assert fallback["source"].get("line_review") != "rewrite-in-place", fallback["source"]
+
+
+
 def main() -> None:
     # No text model: quote what the operator fixed, never split the brief.
     assert texts(build(BRIEF, None)) == [], build(BRIEF, None)
@@ -103,6 +139,7 @@ def main() -> None:
     assert blind["source"]["line_review"].startswith("skipped"), blind["source"]
 
     check_rewrite()
+    check_rewrite_in_place()
     print("adclip script rules: ok")
 
 

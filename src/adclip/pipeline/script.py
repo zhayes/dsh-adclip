@@ -236,10 +236,143 @@ def _line_windows(beat: dict[str, Any]) -> str:
     return "；".join(parts)
 
 
+def _reference_dialogue(beats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten the reference's own timed lines, one entry per spoken window."""
+    out: list[dict[str, Any]] = []
+    for beat in beats:
+        for index, row in enumerate(beat.get("dialogue_rows") or []):
+            start = float(row.get("start_s") or 0)
+            end = float(row.get("end_s") or 0)
+            # No extra tail here: ASR windows are the reference's own speaking
+            # time, and the shot-level tail is already outside them.
+            window = max(0.4, end - start)
+            out.append({
+                "beat": str(beat.get("id") or ""),
+                "index": index,
+                "start_s": start,
+                "end_s": end,
+                "text": str(row.get("text") or "").strip(),
+                "limit": timing.char_budget(window, timing.BUDGET_CPS),
+            })
+    return out
+
+
+def _rewrite_in_place(
+    run: Any,
+    beats: list[dict[str, Any]],
+    brief: str,
+    gag: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Rewrite the reference's own lines inside their own time slots.
+
+    The breakdown already knows what is said and when. Writing a brand-new
+    script and then squeezing it into those slots is what produced mangled
+    sentences; this asks the model to change only the names/prices inside the
+    original sentence structure, keeping one line per reference line.
+    """
+    reference = _reference_dialogue(beats)
+    if not reference:
+        return None
+    listing = "\n".join(
+        f"- {item['beat']}#{item['index']} [{item['start_s']:.1f}–{item['end_s']:.1f}s] {item['text']}（≤{item['limit']}字）"
+        for item in reference
+    )
+    keeps = "\n".join(f"- [{k['beat']}] {k['text']}" for k in gag.get("must_keep") or [])
+    shot_notes = "\n".join(
+        f"- {b['id']} {float(b.get('start_s') or 0):.1f}-{float(b.get('end_s') or 0):.1f}s "
+        f"{(b.get('visual') or {}).get('action') or ''}"[:110]
+        for b in beats
+    )
+    prompt = f"""参考片逐句台词（时间窗 → 原文 → 这句在此时长内念得完的字数上限）：
+{listing}
+
+参考片镜头：
+{shot_notes}
+
+用户需求（制作说明，不是台词，不要照抄也不要念出来）：
+{brief or '保持原片台词，只把商品和价格换成上面给的'}
+
+必须保留：
+{keeps or '（无）'}
+
+{persona_mod.persona_instruction(run.advanced)}
+
+请把上面每一句改写成你的版本：
+- 严格一句对一句：行数、顺序、时间窗都不变，不合并、不拆分、不新增句子；
+- 只改用户要求的部分（商品名、价格、卖点、口播细节），句式、钩子结构、语气和收口方式尽量保留；
+- 每句不得超过括号里的字数（这是原片这句的时长能念完的上限，超了模型会说不完、最后一句被切掉）；
+- 不要照抄用户需求里的制作指令；不要编造未提供的原价、对比价、销量、功效；
+- 价格必须用用户给的数字。
+只输出 JSON，不要解释：
+{{"beats":[{{"id":"b0","lines":[{{"speaker":"A","text":"..."}}]}}]}}"""
+    data = llm.chat_json(
+        "你是广告口播改写。只输出 JSON，不要解释。",
+        prompt,
+        max_tokens=3000,
+        temperature=0.5,
+        text_model=_text_model(run),
+    )
+    if not isinstance(data, dict) or not isinstance(data.get("beats"), list):
+        return None
+    by_id = {str(item.get("id")): item for item in data["beats"] if isinstance(item, dict)}
+    wanted: dict[str, list[dict[str, Any]]] = {}
+    for item in reference:
+        wanted.setdefault(item["beat"], []).append(item)
+    rewritten: dict[str, list[str]] = {}
+    for beat_id, items in wanted.items():
+        returned = [
+            str((line or {}).get("text") or "").strip() if isinstance(line, dict) else str(line or "").strip()
+            for line in ((by_id.get(beat_id) or {}).get("lines") or [])
+        ]
+        returned = [text for text in returned if text]
+        if len(returned) != len(items):
+            # Count mismatch would force a re-spread, which is what we are
+            # avoiding; let the caller use the generated-script path instead.
+            return None
+        rewritten[beat_id] = returned
+    rows = []
+    for beat in beats:
+        items = wanted.get(str(beat.get("id"))) or []
+        lines = []
+        for item, text in zip(items, rewritten.get(str(beat.get("id"))) or []):
+            if _INSTRUCTION.search(text):
+                # Never speak the operator's instructions; keep the reference
+                # wording for that slot instead of dropping the line.
+                text = item["text"]
+            kept, _ = timing.fit_lines(
+                [text],
+                max(0.4, item["end_s"] - item["start_s"]),
+                cps=timing.BUDGET_CPS,
+                grace=timing.GRACE,
+                single_grace=timing.GRACE,
+            )
+            text = (kept or [text])[0]
+            lines.append({"speaker": "A", "text": text, "chars": len(text)})
+        rows.append({
+            "id": beat["id"], "function": beat.get("function"), "len_s": beat.get("len_s"),
+            "cps": timing.BUDGET_CPS,
+            "max_chars": sum(item["limit"] for item in items),
+            "chars": sum(line["chars"] for line in lines), "fit": "ok", "lines": lines,
+            "shot": persona_mod.neutralize_people(str((beat.get("visual") or {}).get("action") or "人物在中景里自然交流，商品可见"), run.advanced)[:120],
+            "start_s": beat.get("start_s"), "end_s": beat.get("end_s"),
+        })
+    return {
+        "version": 2,
+        "beats": rows,
+        "totals": {"duration_s": (beats[0].get("end_s") if beats else None), "chars": sum(r["chars"] for r in rows)},
+        "must_keep_map": {i["id"]: i.get("beat") for i in gag.get("must_keep") or []},
+        "compliance_flags": ["按原片台词逐句改写，价格/功效需人工核对"],
+        "source": {"model": llm.model_label(), "degraded": False, "line_review": "rewrite-in-place"},
+    }
+
+
 def build_script(run: Any, skeleton: dict[str, Any], gag: dict[str, Any]) -> dict[str, Any]:
     brief = str((run.inputs or {}).get("brief") or "").strip()
     advanced = run.advanced or {}
     beats = skeleton.get("beats") or []
+    rewritten = _rewrite_in_place(run, beats, brief, gag)
+    if rewritten is not None:
+        return rewritten
     target = float(advanced.get("duration") or (skeleton.get("source") or {}).get("duration_s") or 8)
     transcript = (skeleton.get("transcript") or [])[:24]
     transcript_text = "\n".join(f"- {x.get('start_s')}-{x.get('end_s')}s {x.get('text')}" for x in transcript)[:1600]

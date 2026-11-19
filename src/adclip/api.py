@@ -50,7 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.19"
+VERSION = "0.1.21"
 
 
 def _media_type(path: Path) -> str:

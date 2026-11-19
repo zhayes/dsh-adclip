@@ -16,7 +16,7 @@ MAX_CPS = 5.5
 # Budgeting ceiling. Text is written for this pace, not the physical maximum: a
 # line planned at 5.5 chars/s has no slack, and the model's last words land
 # after the cut.
-BUDGET_CPS = 4.6
+BUDGET_CPS = 4.0
 PACE_FLOOR = 3.2
 GRACE = 1.15
 SINGLE_GRACE = 1.5
@@ -95,11 +95,18 @@ def _cut(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     head = text[:limit]
-    floor = max(1, int(limit * 0.6))
+    # Only look just behind the limit: a boundary much earlier would drop far
+    # more characters than the budget asked for.
+    floor = max(1, int(limit * 0.85))
     for index in range(len(head) - 1, floor - 1, -1):
         if head[index] in _PUNCT:
             return head[:index].rstrip(_PUNCT + " 　")
     return head.rstrip(_PUNCT + " 　")
+
+
+def shorten(text: str, limit: int) -> str:
+    """Cut a line to `limit` characters at a natural boundary."""
+    return _cut(text, limit)
 
 
 def fit_lines(
@@ -131,14 +138,27 @@ def fit_lines(
     # A hair over is fine: the speaker pushes the pace slightly.
     if total <= budget * grace:
         return texts, False
-    shares = [max(MIN_LINE_CHARS, int(budget * len(text) / total)) for text in texts]
+    return _fit_budget(texts, budget), True
+
+
+def fit_chars(lines: list[str], budget: int) -> list[str]:
+    """Shorten lines to a character budget, keeping every line."""
+    texts = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    if not texts:
+        return []
+    if sum(len(text) for text in texts) <= budget:
+        return texts
+    return _fit_budget(texts, max(MIN_LINE_CHARS * len(texts), int(budget)))
+
+
+def _fit_budget(texts: list[str], budget: int) -> list[str]:
+    shares = [max(MIN_LINE_CHARS, int(budget * len(text) / sum(len(t) for t in texts))) for text in texts]
     while sum(shares) > budget:
         index = max(range(len(shares)), key=lambda i: shares[i])
         if shares[index] <= MIN_LINE_CHARS:
             break
         shares[index] -= 1
-    kept = [_cut(text, share) for text, share in zip(texts, shares)]
-    return [line for line in kept if line], True
+    return [line for line in (_cut(text, share) for text, share in zip(texts, shares)) if line]
 
 
 def overflow(lines: list[str], start: float, end: float, *, cps: float = MAX_CPS) -> bool:
