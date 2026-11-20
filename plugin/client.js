@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
 .adp-panel{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
 .adp-panel-grid{display:grid;grid-template-columns:360px minmax(0,1fr)}
 .adp-asset-col{padding:18px;border-right:1px solid var(--dsw-alias-border-l1);background:linear-gradient(180deg,var(--dsw-alias-bg-layer-2),var(--dsw-alias-bg-layer-1));min-width:0}
-.adp-form-col{padding:18px 20px 0;min-width:0}
+.adp-form-col{padding:18px 20px 0;min-width:0;display:flex;flex-direction:column}
 .adp-section-head{display:flex;align-items:center;gap:8px;margin:0 0 9px}
 .adp-section-head:not(:first-child){margin-top:20px}
 .adp-step{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#C99B54;letter-spacing:.06em;border:1px solid rgba(229,180,92,.35);border-radius:4px;padding:3px 4px;background:rgba(229,180,92,.06)}
@@ -1732,11 +1732,9 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'count' }, (products.length || 0) + ' / 9')
               ),
               h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview }),
-              h('div', { className: 'adp-hint' }, '可上传多张：正面、包装、细节、使用场景。第一张会作为主商品参考。'),
               h('div', { className: 'adp-asset-foot' },
                 h('b', null, '素材建议'),
-                h('div', null, '参考片：一条完整片子，不要混剪。'),
-                h('div', null, '商品图：正面 + 包装 + 细节；没有图也可以先用文字描述。')
+                h('div', null, '参考片：一条完整片子，不要混剪。')
               )
             ),
             h('section', { className: 'adp-form-col' },
@@ -1752,12 +1750,9 @@ window.__ModuleLoader__.load({
                 ),
                 h('textarea', {
                   className: 'adp-brief-input', value: brief, maxLength: 2000, rows: 4,
-                  placeholder: '例如：产品活动价 19.9，卖点是不油腻、追剧零食；保留原片的比价和抢购动作，台词更生活化。',
+                  placeholder: '输入新的产品名称或价格',
                   onChange: (e) => setBrief(e.currentTarget.value)
-                }),
-                h('div', { className: 'adp-brief-foot' },
-                  h('span', null, '写产品、卖点、价格、想保留/想改的地方；要原样念的台词用「」括起来。')
-                )
+                })
               ),
               h('div', { className: 'adp-section-head' },
                 h('span', { className: 'adp-step' }, '03'),
@@ -1766,7 +1761,7 @@ window.__ModuleLoader__.load({
               h(AdvancedRow, { value: advanced, onChange: changeAdvanced }),
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
               overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
-              h('div', { className: 'adp-actionbar' },
+              h('div', { className: 'adp-actionbar', style: { marginTop: 'auto' } },
                 h('div', { className: 'adp-action-note' },
                   !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
                   h('br'),
