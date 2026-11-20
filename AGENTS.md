@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.48` |
-| Python engine (`adclip.api.VERSION`) | `0.1.31` |
+| DSH plugin (`plugin/package.json`) | `0.5.49` |
+| Python engine (`adclip.api.VERSION`) | `0.1.32` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -212,6 +212,20 @@ dist/                      staged plugin artifacts (ignored)
   through `GET /capabilities` (`scheduling.vision`), the
   `adclip_list_capabilities` tool and the Settings page; keep those in sync.
 - DSH attachments persist; frame budget is adaptive (roughly one every 2.5s, min 4, max 12) with up to four refine frames for low-confidence/long beats, and MiniMax stays first.
+- The DSH bridge is the slowest rung and is **not** streaming, so one HTTP read covers
+  one whole generation (measured 25s–80s for the same 4 frames). `_analyze_dsh`
+  therefore sends small batches (tag 4 frames, describe 6, grouped by beat),
+  bisects a failing batch instead of dropping every label, scales `maxTokens`
+  with the batch (3000/frame tag, 1000/frame describe, 4000 floor, 16000 cap) and
+  stops at a total deadline (`ADSTUDIO_DSH_VISION_DEADLINE` 240s tag / 180s
+  describe, `ADSTUDIO_DSH_VISION_TIMEOUT` 120s per call) keeping partial labels.
+  Do not fold this back into one call per pass: a single slow token used to drop
+  every frame and fall through to the heuristic skeleton.
+- `analysis.vision_attempts` carries one row per bridge call
+  (`pass/frames/status/error/seconds`), and a partially labelled pass adds a
+  `warnings` line with the missing frame count. Rungs that are skipped must name
+  themselves (`方舟视觉模型未启用`, `未配置 MINIMAX_API_KEY`) instead of leaving
+  `LAST_ERROR` empty, otherwise the UI can only show the last rung's error.
 
 ### Text/vision models (Doubao-Seed-2.1)
 

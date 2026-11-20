@@ -665,6 +665,7 @@ def analyze(run_id: str) -> dict[str, Any]:
             run_id, source, beats, duration, max_frames=vision_budget, events=events, stats=frame_stats
         )
         if analysis_frames:
+            vision.reset_attempts()
             visual_frames = vision.analyze_frames(analysis_frames, max_frames=vision_budget)
             first_provider = str(getattr(vision, "LAST_PROVIDER", "") or "")
             first_model = str(getattr(vision, "LAST_MODEL", "") or "")
@@ -802,8 +803,19 @@ def analyze(run_id: str) -> dict[str, Any]:
     plan = _remake_plan(run, beats, facts, visual)
     plan["source"]["cuts_s"] = cuts
     warnings = []
+    attempts = [item for item in (getattr(vision, "LAST_ATTEMPTS", []) or []) if isinstance(item, dict)]
     if visual and provider == "dsh":
         warnings.append(f"视觉标签由 DSH 文本模型 {model or 'auto'} 生成")
+    if visual and attempts:
+        # A bisected batch can still deliver most labels; say how many were lost
+        # instead of pretending the pass was clean.
+        lost = [item for item in attempts if str(item.get("status")) in {"failed", "skipped"}]
+        if lost:
+            missing = sum(int(item.get("frames") or 0) for item in lost)
+            first_error = str((lost[0].get("error") or "")).strip()
+            warnings.append(
+                f"视觉标签部分缺失：{missing} 帧未标注" + (f"（{first_error}）" if first_error else "")
+            )
     if visual and not describe_meta["shots"]:
         warnings.append("镜头描述未生成，提示词退回字段拼接" + (f"：{describe_meta['error']}" if describe_meta.get("error") else ""))
     if not visual:
@@ -862,6 +874,7 @@ def analyze(run_id: str) -> dict[str, Any]:
         },
         "cuts": {"cut": len(cuts), "motion": max(0, len(events) - len(cuts))},
         "escalated_frames": int(getattr(vision, "LAST_ESCALATED", 0) or 0),
+        "vision_attempts": attempts,
     }
     skeleton = {
         "version": 3,

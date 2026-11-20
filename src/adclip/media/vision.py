@@ -15,6 +15,7 @@ import base64
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,10 @@ LAST_ERROR = ""
 LAST_PROVIDER = ""
 LAST_MODEL = ""
 LAST_ESCALATED = 0
+# Every DSH bridge call of the current analysis: pass, frame count, status and
+# elapsed seconds. Analysis copies this into the run so a degraded result can
+# explain itself instead of showing one opaque error.
+LAST_ATTEMPTS: list[dict[str, Any]] = []
 
 VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考片按时间顺序排列的关键帧。
 只描述画面中确实看得见的内容，不根据 brief、商品名、常识或上下文补全。
@@ -113,6 +118,11 @@ def available() -> bool:
         or ark_text.available()
         or bool(DSH_VISION_URL)
     )
+
+
+def reset_attempts() -> None:
+    """Forget the previous analysis' bridge calls before a new ladder run."""
+    LAST_ATTEMPTS.clear()
 
 
 def chain_signature() -> str:
@@ -331,7 +341,13 @@ def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | No
         except Exception:
             continue
     errors: list[str] = []
-    for row in (models if models is not None else _ark_order()):
+    candidates = models if models is not None else _ark_order()
+    if not candidates:
+        # Silently returning an empty dict here used to erase the reason the
+        # whole rung was skipped, leaving the user with the DSH error only.
+        LAST_ERROR = "方舟视觉模型未启用（设置 → 文本/视觉调度 里勾选 Doubao-Seed-2.1）"
+        return {}
+    for row in candidates:
         try:
             result = ark_text.chat(
                 "",
@@ -400,46 +416,203 @@ def _escalate(frames: list[dict[str, Any]], rows: dict[str, dict[str, Any]]) -> 
     return rows
 
 
-def _analyze_dsh(frames: list[dict[str, Any]], *, prompt: str = VISION_PROMPT, normalize=_normalize_rows) -> dict[str, Any]:
-    global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
-    if not DSH_VISION_URL:
-        return {}
-    labels = [str(frame.get("id") or "") for frame in frames]
-    payload_frames = []
+def _env_num(name: str, default: float) -> float:
+    try:
+        value = float(str(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return float(default)
+    return value if value > 0 else float(default)
+
+
+def _dsh_payload(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payload = []
     for frame in frames:
         frame_id = str(frame.get("id") or "")
         try:
             data = base64.b64encode(Path(str(frame["path"])).read_bytes()).decode("ascii")
         except Exception:
             continue
-        payload_frames.append({"id": frame_id, "mediaType": "image/jpeg", "data": data, "name": f"{frame_id}.jpg"})
-    if not payload_frames:
+        payload.append({"id": frame_id, "mediaType": "image/jpeg", "data": data, "name": f"{frame_id}.jpg"})
+    return payload
+
+
+def _cast_hint(rows: dict[str, Any]) -> str:
+    """Keep cast keys stable when one shot is labelled across several calls."""
+    seen: dict[str, str] = {}
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        for item in row.get("cast") or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip().upper()
+            text = str(item.get("description") or "").strip()
+            if key and text and key not in seen:
+                seen[key] = text[:80]
+    if not seen:
+        return ""
+    return "已分配人物（沿用同一个 key，不要重新编号）：" + "；".join(
+        f"{key}={text}" for key, text in sorted(seen.items())
+    )
+
+
+def _dsh_once(
+    chunk: list[dict[str, Any]],
+    *,
+    prompt: str,
+    normalize,
+    labels: list[str],
+    max_tokens: int,
+    timeout: float,
+    hint: str,
+) -> tuple[dict[str, Any], str]:
+    payload = _dsh_payload(chunk)
+    if not payload:
+        raise RuntimeError("no readable frames")
+    body = prompt + "\n\n" + _manifest(chunk)
+    if hint:
+        body += "\n" + hint
+    with httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
+        response = client.post(
+            DSH_VISION_URL,
+            json={"frames": payload, "prompt": body, "maxTokens": max_tokens},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:240]}")
+    data = response.json().get("dsh") or {}
+    text = _strip(str(data.get("text") or ""))
+    value = _extract_json(text)
+    if value is None:
+        raise RuntimeError(f"no JSON in {len(text)} chars")
+    rows = normalize(value, labels)
+    if not rows:
+        raise RuntimeError(f"JSON has no usable rows in {len(text)} chars")
+    return rows, str(data.get("model") or "")
+
+
+def _dsh_chunks(frames: list[dict[str, Any]], size: int, group_key: str | None) -> list[list[dict[str, Any]]]:
+    size = max(1, int(size))
+    if not group_key:
+        return [frames[index:index + size] for index in range(0, len(frames), size)]
+    # A shot's frames stay in one call: the description is written per shot, and
+    # splitting a shot would describe it twice from half its evidence.
+    order: list[str] = []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for frame in frames:
+        key = str(frame.get(group_key) or frame.get("id") or "")
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(frame)
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for key in order:
+        items = grouped[key]
+        if current and len(current) + len(items) > size:
+            chunks.append(current)
+            current = []
+        current.extend(items)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _analyze_dsh(
+    frames: list[dict[str, Any]],
+    *,
+    prompt: str = VISION_PROMPT,
+    normalize=_normalize_rows,
+    batch_size: int = 4,
+    tokens_per_frame: int = 3000,
+    deadline_s: float = 240.0,
+    group_key: str | None = None,
+    label: str = "tag",
+) -> dict[str, Any]:
+    """Label keyframes through the Host bridge in budgeted batches.
+
+    The bridge is not streaming, so one HTTP read covers one whole generation,
+    and the same call swings between 25s and 80s depending on load. Packing every
+    frame into a single request means one slow token drops every label, so the
+    ladder sends small batches, bisects a batch that fails, and stops at a total
+    deadline keeping whatever was labelled. Partial labels beat no labels.
+    """
+    global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
+    if not DSH_VISION_URL:
+        return {}
+    usable = [frame for frame in frames if Path(str(frame.get("path") or "")).is_file()]
+    if not usable:
         LAST_ERROR = "DSH vision: no readable frames"
         return {}
-    try:
-        with httpx.Client(timeout=httpx.Timeout(float(os.environ.get("ADSTUDIO_DSH_VISION_TIMEOUT", "45")), connect=10.0)) as client:
-            response = client.post(
-                DSH_VISION_URL,
-                json={"frames": payload_frames, "prompt": prompt + "\n\n" + _manifest(frames), "maxTokens": 6000},
+    timeout = _env_num("ADSTUDIO_DSH_VISION_TIMEOUT", 120.0)
+    deadline = time.monotonic() + max(1.0, float(deadline_s))
+    rows: dict[str, Any] = {}
+    attempts: list[dict[str, Any]] = []
+    failures: list[str] = []
+    missed: list[str] = []
+    model_used = ""
+
+    def run(chunk: list[dict[str, Any]], depth: int = 0) -> None:
+        nonlocal model_used
+        if time.monotonic() >= deadline:
+            attempts.append({"pass": label, "frames": len(chunk), "status": "skipped", "error": "超过总时限", "seconds": 0.0})
+            missed.extend(str(frame.get("id") or "") for frame in chunk)
+            return
+        # The describe contract is keyed by shot, the tag contract by frame: a
+        # batched call must label what the caller's normalizer expects.
+        labels = list(dict.fromkeys(
+            str(frame.get(group_key) or frame.get("id") or "") for frame in chunk
+        ))
+        started = time.monotonic()
+        try:
+            batch_rows, model = _dsh_once(
+                chunk,
+                prompt=prompt,
+                normalize=normalize,
+                labels=labels,
+                max_tokens=min(16000, max(4000, int(tokens_per_frame) * len(chunk))),
+                timeout=timeout,
+                hint=_cast_hint(rows) if normalize is _normalize_rows else "",
             )
-        if response.status_code >= 400:
-            LAST_ERROR = f"DSH vision HTTP {response.status_code}: {response.text[:240]}"
-            return {}
-        data = response.json().get("dsh") or {}
-        text = _strip(str(data.get("text") or ""))
-        value = _extract_json(text)
-        if value is None:
-            LAST_ERROR = f"DSH vision returned no JSON in {len(text)} chars"
-            return {}
-        rows = normalize(value, labels)
-        if rows:
-            LAST_PROVIDER = "dsh"
-            LAST_MODEL = str(data.get("model") or "")
-            LAST_ERROR = ""
+        except Exception as exc:  # noqa: BLE001
+            attempts.append({
+                "pass": label,
+                "frames": len(chunk),
+                "status": "failed",
+                "error": str(exc)[:200],
+                "seconds": round(time.monotonic() - started, 1),
+            })
+            failures.append(f"{len(chunk)} 帧: {str(exc)[:120]}")
+            if len(chunk) > 1 and depth < 2:
+                middle = len(chunk) // 2
+                run(chunk[:middle], depth + 1)
+                run(chunk[middle:], depth + 1)
+            else:
+                missed.extend(labels)
+            return
+        rows.update(batch_rows)
+        if model:
+            model_used = model
+        attempts.append({
+            "pass": label,
+            "frames": len(chunk),
+            "status": "ok",
+            "error": "",
+            "seconds": round(time.monotonic() - started, 1),
+        })
+
+    for chunk in _dsh_chunks(usable, batch_size, group_key):
+        run(chunk)
+    LAST_ATTEMPTS.extend(attempts)
+    del LAST_ATTEMPTS[:-40]
+    if rows:
+        LAST_PROVIDER = "dsh"
+        LAST_MODEL = model_used
+        # Partial success is still success; missing frames are reported through
+        # LAST_ATTEMPTS so analysis can warn without discarding the labels.
+        LAST_ERROR = ""
         return rows
-    except Exception as exc:  # noqa: BLE001
-        LAST_ERROR = f"DSH vision: {type(exc).__name__}: {exc}"[:300]
-        return {}
+    LAST_ERROR = ("DSH vision: " + " | ".join(failures))[:300] if failures else "DSH vision: 没有可用的标注"
+    return {}
 
 
 def describe_beats(
@@ -479,6 +652,8 @@ def describe_beats(
                 errors.append(LAST_ERROR)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"MiniMax: {type(exc).__name__}: {exc}")
+    else:
+        errors.append("MiniMax: 未配置 MINIMAX_API_KEY")
     if ark_text.available():
         try:
             rows = _analyze_ark(selected, prompt=prompt, normalize=_normalize_beats)
@@ -488,9 +663,20 @@ def describe_beats(
                 errors.append(LAST_ERROR)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"Ark: {type(exc).__name__}: {exc}")
+    else:
+        errors.append("Ark: 未配置 ARK_API_KEY")
     if DSH_VISION_URL:
         try:
-            rows = _analyze_dsh(selected, prompt=prompt, normalize=_normalize_beats)
+            rows = _analyze_dsh(
+                selected,
+                prompt=prompt,
+                normalize=_normalize_beats,
+                batch_size=int(_env_num("ADSTUDIO_DSH_DESCRIBE_BATCH", 6)),
+                tokens_per_frame=1000,
+                deadline_s=_env_num("ADSTUDIO_DSH_DESCRIBE_DEADLINE", 180.0),
+                group_key="beat_id",
+                label="describe",
+            )
             if rows:
                 return {key: value for key, value in rows.items() if key in labels}
             if LAST_ERROR:
@@ -499,6 +685,8 @@ def describe_beats(
             errors.append(f"DSH: {type(exc).__name__}: {exc}")
     LAST_ERROR = " | ".join(errors)[:400] or "没有可用的描述模型"
     return {}
+
+
 def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict[str, dict[str, Any]]:
     """Return visual tags keyed by beat id. Empty dict means unavailable."""
     global LAST_ERROR, LAST_PROVIDER, LAST_MODEL, LAST_ESCALATED
@@ -524,6 +712,8 @@ def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict
                 errors.append(LAST_ERROR)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"MiniMax: {type(exc).__name__}: {exc}")
+    else:
+        errors.append("MiniMax: 未配置 MINIMAX_API_KEY")
     if ark_text.available():
         try:
             rows = _analyze_ark(usable)
@@ -537,9 +727,16 @@ def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict
                 errors.append(LAST_ERROR)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"Ark: {type(exc).__name__}: {exc}")
+    else:
+        errors.append("Ark: 未配置 ARK_API_KEY")
     if DSH_VISION_URL:
         try:
-            rows = _analyze_dsh(usable)
+            rows = _analyze_dsh(
+                usable,
+                batch_size=int(_env_num("ADSTUDIO_DSH_VISION_BATCH", 4)),
+                deadline_s=_env_num("ADSTUDIO_DSH_VISION_DEADLINE", 240.0),
+                label="tag",
+            )
             if rows:
                 return rows
             if LAST_ERROR:

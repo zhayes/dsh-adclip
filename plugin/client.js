@@ -396,8 +396,6 @@ window.__ModuleLoader__.load({
 .adp-slot .fill{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:flex-start;padding:7px;background:linear-gradient(transparent 40%,rgba(0,0,0,.55));color:#fff;font-size:10px}
 .adp-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .adp-chip{border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:3px 9px;font-size:10.5px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
-.adp-asset-foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1.6}
-.adp-asset-foot b{display:block;color:var(--dsw-alias-label-primary);font-size:10.5px;margin-bottom:4px;font-weight:600}
 .adp-result{display:flex;flex-direction:column;gap:14px;max-width:1120px;margin:0 auto}
 .adp-result-head{display:flex;align-items:center;gap:12px;min-height:38px}
 .adp-back{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-radius:7px;padding:6px 9px;cursor:pointer;font:inherit;font-size:11.5px;white-space:nowrap}
@@ -1731,11 +1729,7 @@ window.__ModuleLoader__.load({
                 h('span', null, '商品图'),
                 h('span', { className: 'count' }, (products.length || 0) + ' / 9')
               ),
-              h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview }),
-              h('div', { className: 'adp-asset-foot' },
-                h('b', null, '素材建议'),
-                h('div', null, '参考片：一条完整片子，不要混剪。')
-              )
+              h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview })
             ),
             h('section', { className: 'adp-form-col' },
               h('div', { className: 'adp-section-head' },
@@ -1762,11 +1756,7 @@ window.__ModuleLoader__.load({
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
               overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
               h('div', { className: 'adp-actionbar', style: { marginTop: 'auto' } },
-                h('div', { className: 'adp-action-note' },
-                  !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
-                  h('br'),
-                  skipConfirm ? '已默认跳过二次确认：提交后直接开始生成；取消勾选可先确认提示词。' : '已取消跳过：提交后先停下让你确认提示词，确认后才生成。'
-                ),
+                !hasRealModel ? h('div', { className: 'adp-action-note' }, '还没有可用的视频模型，先去「设置」里配置厂商 key。') : null,
                 h('div', { className: 'adp-grow' }),
                 h('label', { className: 'adp-model-enable', style: { marginRight: 12 }, title: '默认勾选：直接开始生成；取消勾选：生成前先停下来让你确认提示词' },
                   h('input', { type: 'checkbox', checked: skipConfirm, onChange: (e) => setSkipConfirm(e.currentTarget.checked) }),
