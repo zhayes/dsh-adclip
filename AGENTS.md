@@ -22,7 +22,7 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.45` |
+| DSH plugin (`plugin/package.json`) | `0.5.46` |
 | Python engine (`adclip.api.VERSION`) | `0.1.31` |
 
 Do not bump versions unless you are actually releasing. A client-only change
@@ -147,10 +147,11 @@ dist/                      staged plugin artifacts (ignored)
   (count/relationship) plus an explicit "不要沿用原片人物的外貌/发型/服装/配饰"
   line. Background and lighting are preserved in every scope.
 - `replace_scope` also accepts `none` (nothing replaced). The remake form derives
-  it from the inputs — product images mean 商品, an enabled persona means 人物,
-  neither means `none` — and only shows the three selects under 「手动调整」.
-  A person replacement without a persona or person reference image is not
-  claimed in the prompt: the reference cast description is used instead.
+  it from the inputs with no manual override: product images mean 商品, no
+  product images mean `none` (the whole reference is reused), and audio stays
+  `regenerate` so the old product name/price cannot survive. A person
+  replacement without a persona or person reference image is not claimed in the
+  prompt: the reference cast description is used instead.
 - Non-H3 storyboard edit/replace is transactional: failure restores the prior
   successful run and records `last_edit_error`.
 - On startup, `store.repair_segment_edit_failures()` repairs the historical

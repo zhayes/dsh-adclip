@@ -210,16 +210,7 @@ window.__ModuleLoader__.load({
 .adp-history-open{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px;text-align:left;background:none;border:0;padding:0;color:inherit;cursor:pointer}
 .adp-history-open b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adp-history-open span{font-size:10.5px;color:var(--dsw-alias-label-secondary)}
-.adp-recent{display:flex;flex-direction:column;gap:6px}
-.adp-recent-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit;cursor:pointer}
-.adp-recent-row:hover{border-color:rgba(201,155,84,.45)}
-.adp-recent-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
-.adp-recent-main b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.adp-recent-main span{font-size:10.5px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.adp-recent-open{font-size:10.5px;color:#C99B54;white-space:nowrap}
-.adp-auto-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-2)}
-.adp-auto-title{font-size:10px;letter-spacing:.06em;color:#C99B54}
-.adp-auto-text{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:normal}
+
 .adp-composer-input:disabled{opacity:.6;cursor:not-allowed}
 .adp-chatpage{max-width:900px;height:calc(100dvh - 128px);min-height:560px;display:flex;flex-direction:column;margin:0 auto}
 .adp-chat-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin:0 0 8px;flex:0 0 auto}
@@ -685,10 +676,6 @@ window.__ModuleLoader__.load({
       return pick ? pick.id : ''
     }
 
-    /** How the subtitle setting reads in the UI. */
-    function subtitleLabel(value) {
-      return value === 'sidecar' ? 'SRT 旁挂' : '不启用'
-    }
 
     async function parseIntentWithDsh(brief) {
       try {
@@ -1034,27 +1021,13 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AdvancedRow({ value, onChange, models, needsDialogue, autoModel, autoTiming, timingNote, aspectNote }) {
+    function AdvancedRow({ value, onChange }) {
       const v = value || {}
       const set = (key, val) => onChange(Object.assign({}, v, { [key]: val }))
-      const usableModels = (models || []).filter(m => m.available && m.enabled !== false)
-      const modelOptions = usableModels.map(m => ({ value: m.id, label: m.label }))
-      const currentModel = modelOptions.some(o => o.value === v.model) ? v.model : (modelOptions[0] ? modelOptions[0].value : '')
       return h('div', { className: 'adp-col', style: { gap: 9 } },
-        h('div', { className: 'adp-field-grid g3' },
-          autoTiming
-            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '时长'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, timingNote || '跟随参考片'))
-            : h(FormSelect, { label: '时长（秒）', value: v.duration || 12, onChange: (x) => set('duration', Number(x)), options: [5, 8, 10, 12, 15, 30] }),
-          autoTiming
-            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '比例'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, aspectNote || '跟随参考片'))
-            : h(FormSelect, { label: '比例', value: v.aspect || '9:16', onChange: (x) => set('aspect', x), options: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'] }),
-          h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] })
-        ),
-        h('div', { className: 'adp-field-grid g3' },
-          autoModel
-            ? h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '模型'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, '自动选择（H3 完整复刻优先）'))
-            : h(FormSelect, { label: '模型', value: currentModel, onChange: (x) => set('model', x), options: modelOptions }),
-          h(FormSelect, { label: '字幕', value: v.subtitle || 'off', onChange: (x) => set('subtitle', x), options: [{ value: 'off', label: '不启用' }, { value: 'sidecar', label: 'SRT 旁挂' }] })
+        h('div', { className: 'adp-field-grid g2' },
+          h(FormSelect, { label: '清晰度', value: v.resolution || '720p', onChange: (x) => set('resolution', x), options: ['480p', '720p', '1080p'] }),
+          h('div', { className: 'adp-field' }, h('div', { className: 'adp-field-label' }, '模型'), h('div', { className: 'adp-small adp-muted', style: { paddingTop: 8 } }, '自动选择（H3 完整复刻优先）'))
         )
       )
     }
@@ -1654,7 +1627,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function RecreateTab({ models, runs, onOpen, onStarted }) {
+    function RecreateTab({ models, onStarted }) {
       const [refAsset, setRefAsset] = useState(null)
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
@@ -1662,20 +1635,14 @@ window.__ModuleLoader__.load({
       // Default: go straight to generation. Unchecking pauses after the prompt is
       // rendered so it can be reviewed before spending a generation.
       const [skipConfirm, setSkipConfirm] = useState(true)
-      const [replaceScope, setReplaceScope] = useState('product')
-      const [audioMode, setAudioMode] = useState('regenerate')
       const [touched, setTouched] = useState({})
       const [detected, setDetected] = useState(() => detectVideoParams(''))
       const [preview, setPreview] = useState(null)
       // 复刻默认不动人物：只有商品图决定换商品，没图就完整沿用参考片。
       // 要改人物时写在需求描述里，由脚本/提示词处理。
-      const [manualSettings, setManualSettings] = useState(false)
       const hasProducts = products.length > 0
-      const derivedScope = hasProducts ? 'product' : 'none'
-      const effectiveScope = manualSettings ? replaceScope : derivedScope
-      const effectiveAudio = manualSettings ? audioMode : 'regenerate'
-      const preserveAllowed = effectiveScope === 'none'
-      useEffect(() => { if (!preserveAllowed && audioMode === 'preserve') setAudioMode('regenerate') }, [preserveAllowed, audioMode])
+      // 替换范围完全由素材推导，声音统一按新台词生成。
+      const replaceScope = hasProducts ? 'product' : 'none'
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
       const usableModels = (models || []).filter((m) => m.available && m.enabled !== false)
@@ -1702,10 +1669,7 @@ window.__ModuleLoader__.load({
       // The brief wins: every parameter it names replaces the control value, and
       // the list below says exactly what will change before the run starts.
       const overrides = []
-      if (detected.aspect && detected.aspect !== advanced.aspect) overrides.push('比例 ' + detected.aspect + '（控件 ' + advanced.aspect + '）')
-      if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
       if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
-      if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
       const start = async () => {
         if (!refAsset) { setErr('请先上传参考视频'); return }
         if (imageOnly && !products.length) { setErr('当前模型是图生视频，请先上传至少一张商品图'); return }
@@ -1732,24 +1696,16 @@ window.__ModuleLoader__.load({
           const data = await api('/runs', { method: 'POST', body: {
             scenario: 'viral-remake',
             inputs: { reference_asset_id: refAsset.id, product_asset_ids: products.map(p => p.id), brief },
-            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: effectiveScope, audio_mode: effectiveAudio, prompt_confirm: !skipConfirm }),
+            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: replaceScope, audio_mode: 'regenerate', prompt_confirm: !skipConfirm }),
           } })
           onStarted(data.run)
           // A submitted remake is done: clear the form so the next visit starts empty.
           setBrief(''); setRefAsset(null); setProducts([]); setPreview(null)
           setSkipConfirm(true)
-          setManualSettings(false)
           setDetected(detectVideoParams('')); setTouched({})
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
-      const recent = (runs || []).filter((run) => run.scenario === 'viral-remake').slice(0, 5)
-      const scopeLabel = { product: '商品', none: '不替换（全部沿用参考片）' }[effectiveScope] || effectiveScope
-      const withProducts = effectiveScope === 'product' && products.length
-      const scopeSummary = [
-        '将替换：' + (withProducts ? scopeLabel + '（图片 1–' + products.length + '）' : scopeLabel),
-        effectiveScope === 'product' ? '人物：沿用参考片' : '',
-        '声音：' + (effectiveAudio === 'preserve' ? '保留原声' : '按新台词生成'),
-      ].filter(Boolean).join(' · ')
+
       return h('div', { className: 'adp-page' },
         h('div', { className: 'adp-page-head' },
           h('div', null,
@@ -1807,21 +1763,7 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'adp-step' }, '03'),
                 h('span', { className: 'adp-section-title' }, '生成设置')
               ),
-              h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models, needsDialogue: true, autoModel: true, autoTiming: true, timingNote: refAsset && refAsset.duration_s ? '跟随参考片 · ' + Number(refAsset.duration_s).toFixed(1) + 's' : '自动解析参考片', aspectNote: refAsset && refAsset.width && refAsset.height ? '跟随参考片 · ' + (refAsset.height > refAsset.width * 1.15 ? '9:16' : refAsset.width > refAsset.height * 1.15 ? '16:9' : '1:1') : '自动解析参考片' }),
-              h('div', { className: 'adp-auto-row' },
-                h('div', { className: 'adp-grow' },
-                  h('div', { className: 'adp-auto-title' }, '自动判定'),
-                  h('div', { className: 'adp-auto-text' }, scopeSummary)
-                ),
-                h('button', { className: 'adp-btn ghost', onClick: () => setManualSettings((value) => !value) }, manualSettings ? '收起手动' : '手动调整')
-              ),
-              manualSettings ? h('div', { className: 'adp-field-grid g2' },
-                h(FormSelect, { label: '替换内容', value: replaceScope, onChange: setReplaceScope, options: [{ value: 'product', label: '换商品' }, { value: 'none', label: '不替换（全部沿用参考片）' }] }),
-                h(FormSelect, { label: '声音', value: audioMode, onChange: setAudioMode, options: preserveAllowed ? [{ value: 'regenerate', label: '按新台词生成' }, { value: 'preserve', label: '保留原声' }] : [{ value: 'regenerate', label: '按新台词生成' }] })
-              ) : null,
-              h('div', { className: 'adp-hint' }, manualSettings
-                ? (preserveAllowed ? '手动模式：不替换商品时可以保留原声；换商品时引擎会强制改为按新台词生成。' : '手动模式：换商品必须按新台词生成，避免旧产品名/旧价格残留在口播里。')
-                : '按上传素材自动决定：传了商品图就换商品，没传就完整沿用参考片；人物默认不动。'),
+              h(AdvancedRow, { value: advanced, onChange: changeAdvanced }),
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
               overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
               h('div', { className: 'adp-actionbar' },
@@ -1844,23 +1786,6 @@ window.__ModuleLoader__.load({
             )
           )
         ),
-        recent.length ? h('section', { className: 'adp-panel', style: { marginTop: 10, padding: '12px 14px' } },
-          h('div', { className: 'adp-section-head' },
-            h('span', { className: 'adp-step' }, '03'),
-            h('span', { className: 'adp-section-title' }, '最近复刻'),
-            h('span', { className: 'adp-section-note' }, '点开看上次的结果')
-          ),
-          h('div', { className: 'adp-recent' }, recent.map((run) => h('button', {
-            key: run.id, className: 'adp-recent-row', onClick: () => onOpen && onOpen(run),
-          },
-            h('div', { className: 'adp-recent-main' },
-              h('b', null, run.title || '未命名复刻'),
-              h('span', null, (run.created_at ? new Date(run.created_at).toLocaleString() : '') + ' · ' + (run.step || '') + (run.version > 1 ? ' · v' + run.version : ''))
-            ),
-            h(StatusBadge, { status: run.status }),
-            h('span', { className: 'adp-recent-open' }, '打开 →')
-          )))
-        ) : null,
         preview ? h(PreviewModal, { asset: preview, onClose: () => setPreview(null) }) : null
       )
     }
@@ -3159,7 +3084,7 @@ window.__ModuleLoader__.load({
       }, [])
 
       useEffect(() => { void refresh() }, [refresh])
-      // 回到复刻页时重新拉一遍任务列表，最近复刻不会停在旧状态。
+      // 回到复刻页时刷新一次数据，模型/素材可能已在别的页面变化。
       useEffect(() => { if (tab === 'recreate' && !selected) void refresh() }, [tab, selected, refresh])
 
       useEffect(() => {
@@ -3272,7 +3197,7 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'adp-btn ghost', style: { marginLeft: 8 }, onClick: () => setForceSetup(true) }, '去处理'))
               : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
-            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, runs, onOpen: openRun, onStarted: started })),
+            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, onStarted: started })),
             h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, textModels, active: !selected && tab === 'text', onStarted: started, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,
