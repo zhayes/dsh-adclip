@@ -22,7 +22,7 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.46` |
+| DSH plugin (`plugin/package.json`) | `0.5.47` |
 | Python engine (`adclip.api.VERSION`) | `0.1.31` |
 
 Do not bump versions unless you are actually releasing. A client-only change
