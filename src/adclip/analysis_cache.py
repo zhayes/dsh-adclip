@@ -16,7 +16,7 @@ from typing import Any
 
 from . import store
 
-CACHE_VERSION = "7"
+CACHE_VERSION = "8"
 CACHE_DIR = store.DATA / "analysis_cache"
 
 

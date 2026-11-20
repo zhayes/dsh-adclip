@@ -109,7 +109,7 @@ SCENARIOS: list[dict[str, Any]] = [
             {"key": "resolution", "label": "清晰度", "type": "enum", "options": ["480p", "720p", "1080p"], "default": "720p"},
             {"key": "model", "label": "模型", "type": "model", "default": "auto"},
             {"key": "remake_mode", "label": "复刻模式", "type": "enum", "options": ["auto"], "default": "auto"},
-            {"key": "replace_scope", "label": "替换内容", "type": "enum", "options": ["both", "product", "person"], "default": "both"},
+            {"key": "replace_scope", "label": "替换内容", "type": "enum", "options": ["both", "product", "person", "none"], "default": "both"},
             {"key": "person_scope", "label": "人物范围", "type": "enum", "options": ["main", "all"], "default": "main"},
             {"key": "audio_mode", "label": "声音", "type": "enum", "options": ["regenerate", "preserve"], "default": "regenerate"},
             {"key": "subtitle", "label": "字幕", "type": "enum", "options": ["off", "sidecar"], "default": "off"},

@@ -105,17 +105,25 @@ def build_h3_replace_prompt(
             "保留原商品的位置、大小、手持方式、出现时机、包装朝向和遮挡关系。"
         )
     if scope in {"both", "person"}:
-        start = product_count + 1 if product_count else 1
-        person_label = f"图片{start}" if person_count else "人物参考图"
         people = str(summary.get("people") or "").strip()
         who = f"原片中的主角（{people}）" if people else "原片中的主角"
         if person_scope == "all":
             who = "原片中的所有人物"
-        lines.append(
-            f"{2 if scope == 'both' else 1}. 将{who}替换为{person_label}中的人物；"
-            "保留原人物的位置、动作、表情、口型、人物关系和镜头关系。"
-        )
-        lines.append("新人物以参考图为准；不要沿用原片人物的外貌、发型、服装、配饰、眼镜或胡须。")
+        index = 2 if scope == "both" else 1
+        persona_text = _persona_text(advanced)
+        if person_count:
+            start = product_count + 1 if product_count else 1
+            lines.append(
+                f"{index}. 将{who}替换为图片{start}中的人物；"
+                "保留原人物的位置、动作、表情、口型、人物关系和镜头关系。"
+            )
+            lines.append("新人物以参考图为准；不要沿用原片人物的外貌、发型、服装、配饰、眼镜或胡须。")
+        elif persona_text:
+            lines.append(
+                f"{index}. 将{who}替换为：{persona_text}；"
+                "保留原人物的位置、动作、表情、口型和镜头关系。"
+            )
+        # 既没有人物参考图也没有模特设定：没有东西可替换，保留原片人物。
     if audio_mode == "regenerate" and spoken:
         lines.extend([
             "参考视频1没有声音；只保留画面、镜头、场景、动作、构图和节奏。",
@@ -134,7 +142,7 @@ def build_h3_replace_prompt(
             "保留参考视频1的原声、台词和音效，不要重新生成音频。",
         ])
     persona = _persona_text(advanced)
-    if persona and scope in {"both", "person"}:
+    if persona and scope in {"both", "person"} and person_count:
         lines.append(f"替换后的人物设定：{persona}。")
     if brief:
         lines.append(f"用户需求（制作说明，不是台词）：{brief[:800]}")

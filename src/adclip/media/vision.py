@@ -90,6 +90,20 @@ VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考�
 - 多帧一起看可以用前后帧判断连续性，但不能把不同帧的内容混到同一帧。
 - 同一人物、同一场景在不同帧用同样的词描述，方便跨帧合并。"""
 
+DESCRIBE_PROMPT = """你是广告片分镜描述器。输入是同一参考片按时间顺序排列的关键帧，按镜头分组，并附该镜台词。
+为每个镜头写一段连贯的中文画面描述，供视频生成模型复现这一镜。
+只描述画面中确实看得见的内容；不根据 brief、商品名或常识补全；不编造品牌、价格、功效。
+每镜一段，id 必须对应输入的镜头 id，不要新增镜头。按这个顺序写成一段连续的文字：
+1) 人物动作的过程（先做什么、再做什么，带上手部动作）；
+2) 表情、视线和情绪变化；
+3) 环境、背景元素和光线；
+4) 构图与主体在画面中的位置。
+不要描写人物的长相、年龄、发型、服装、配饰和道具（这些字段会单独提供）；不要复述台词原文。
+不要写“镜头1”“画面：”这类标题，不要用列表或分条。
+每段 120–200 字，2–4 句，句子之间用逗号或句号自然衔接；没有人物就只写环境和动作过程。
+看不清的细节略过，不要猜。
+只输出 JSON，不要 markdown：{"beats":[{"id":"b0","description":"..."}]}"""
+
 
 def available() -> bool:
     if os.environ.get("ADSTUDIO_VISION", "1") == "0":
@@ -236,11 +250,45 @@ def _normalize_rows(value: dict[str, Any] | None, labels: list[str]) -> dict[str
     return out
 
 
-def _analyze_minimax(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _normalize_beats(value: dict[str, Any] | None, labels: list[str]) -> dict[str, str]:
+    """Per-shot description text keyed by beat id, ignoring frame labels."""
+    rows = (value or {}).get("beats")
+    if not isinstance(rows, list):
+        return {}
+    wanted = set(labels)
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        beat_id = str(row.get("id") or "")
+        if beat_id not in wanted:
+            continue
+        text = str(row.get("description") or "").strip()
+        if text:
+            out[beat_id] = text[:400]
+    return out
+
+
+def _beat_manifest(beats: list[dict[str, Any]], frames: list[dict[str, Any]]) -> str:
+    rows = []
+    for beat in beats:
+        beat_id = str(beat.get("id") or "")
+        ids = [str(frame.get("id")) for frame in frames if str(frame.get("beat_id") or "") == beat_id]
+        if not ids:
+            continue
+        line = f"镜头 {beat_id}（{beat.get('start_s', 0)}–{beat.get('end_s', 0)}s），关键帧：{'、'.join(ids)}"
+        text = str(beat.get("dialogue_text") or "").strip()
+        if text:
+            line += "；台词：" + text[:120]
+        rows.append(line)
+    return "\n".join(rows)
+
+
+def _analyze_minimax(frames: list[dict[str, Any]], *, prompt: str = VISION_PROMPT, normalize=_normalize_rows) -> dict[str, Any]:
     global LAST_ERROR
     key = os.environ.get("MINIMAX_API_KEY", "").strip()
     labels = [str(frame.get("id") or "") for frame in frames]
-    content: list[dict[str, Any]] = [{"type": "text", "text": VISION_PROMPT + "\n\n" + _manifest(frames)}]
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt + "\n\n" + _manifest(frames)}]
     for frame in frames:
         frame_id = str(frame.get("id") or "")
         content.append({"type": "text", "text": f"关键帧 {frame_id}，时间 {frame.get('start_s', 0)}-{frame.get('end_s', 0)} 秒："})
@@ -264,17 +312,17 @@ def _analyze_minimax(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     if value is None:
         LAST_ERROR = f"MiniMax returned no JSON in {len(text)} chars"
         return {}
-    rows = _normalize_rows(value, labels)
+    rows = normalize(value, labels)
     if rows:
         LAST_ERROR = ""
     return rows
 
 
-def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | None = None, *, prompt: str = VISION_PROMPT, normalize=_normalize_rows) -> dict[str, Any]:
     """Doubao-Seed-2.1 on Ark, tried in the configured pro/turbo/lite order."""
     global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
     labels = [str(frame.get("id") or "") for frame in frames]
-    content: list[dict[str, Any]] = [{"type": "text", "text": VISION_PROMPT + "\n\n" + _manifest(frames)}]
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt + "\n\n" + _manifest(frames)}]
     for frame in frames:
         frame_id = str(frame.get("id") or "")
         content.append({"type": "text", "text": f"关键帧 {frame_id}，时间 {frame.get('start_s', 0)}-{frame.get('end_s', 0)} 秒："})
@@ -302,7 +350,7 @@ def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | No
         if value is None:
             errors.append(f"{row['short']}: no JSON in {len(text)} chars")
             continue
-        rows = _normalize_rows(value, labels)
+        rows = normalize(value, labels)
         if rows:
             LAST_PROVIDER = "ark"
             LAST_MODEL = str(result.get("model") or ark_text.model_id(row))
@@ -352,7 +400,7 @@ def _escalate(frames: list[dict[str, Any]], rows: dict[str, dict[str, Any]]) -> 
     return rows
 
 
-def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _analyze_dsh(frames: list[dict[str, Any]], *, prompt: str = VISION_PROMPT, normalize=_normalize_rows) -> dict[str, Any]:
     global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
     if not DSH_VISION_URL:
         return {}
@@ -372,7 +420,7 @@ def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         with httpx.Client(timeout=httpx.Timeout(float(os.environ.get("ADSTUDIO_DSH_VISION_TIMEOUT", "45")), connect=10.0)) as client:
             response = client.post(
                 DSH_VISION_URL,
-                json={"frames": payload_frames, "prompt": VISION_PROMPT + "\n\n" + _manifest(frames), "maxTokens": 6000},
+                json={"frames": payload_frames, "prompt": prompt + "\n\n" + _manifest(frames), "maxTokens": 6000},
             )
         if response.status_code >= 400:
             LAST_ERROR = f"DSH vision HTTP {response.status_code}: {response.text[:240]}"
@@ -383,7 +431,7 @@ def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if value is None:
             LAST_ERROR = f"DSH vision returned no JSON in {len(text)} chars"
             return {}
-        rows = _normalize_rows(value, labels)
+        rows = normalize(value, labels)
         if rows:
             LAST_PROVIDER = "dsh"
             LAST_MODEL = str(data.get("model") or "")
@@ -394,6 +442,63 @@ def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         return {}
 
 
+def describe_beats(
+    frames: list[dict[str, Any]],
+    beats: list[dict[str, Any]],
+    *,
+    max_frames: int = 14,
+) -> dict[str, str]:
+    """One flowing description per shot, keyed by beat id. Empty means unavailable.
+
+    Runs on the same ladder as the tag pass but with a different contract: the
+    model reads every frame of a shot together and writes a paragraph, because a
+    renderer can only concatenate fields and a prompt needs prose. Appearance is
+    deliberately excluded so a replaced person cannot inherit the reference look.
+    """
+    global LAST_ERROR, LAST_PROVIDER, LAST_MODEL
+    LAST_ERROR = ""
+    if os.environ.get("ADSTUDIO_DESCRIBE", "1") == "0":
+        return {}
+    selected = [f for f in frames[:max_frames] if Path(str(f.get("path") or "")).is_file()]
+    labels = [str(beat.get("id")) for beat in beats if str(beat.get("id") or "")]
+    if not selected or not labels:
+        return {}
+    manifest = _beat_manifest(beats, selected)
+    if not manifest:
+        return {}
+    prompt = DESCRIBE_PROMPT + "\n\n" + manifest
+    errors: list[str] = []
+    if os.environ.get("MINIMAX_API_KEY", "").strip():
+        try:
+            rows = _analyze_minimax(selected, prompt=prompt, normalize=_normalize_beats)
+            if rows:
+                LAST_PROVIDER = "minimax"
+                LAST_MODEL = MODEL
+                return {key: value for key, value in rows.items() if key in labels}
+            if LAST_ERROR:
+                errors.append(LAST_ERROR)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"MiniMax: {type(exc).__name__}: {exc}")
+    if ark_text.available():
+        try:
+            rows = _analyze_ark(selected, prompt=prompt, normalize=_normalize_beats)
+            if rows:
+                return {key: value for key, value in rows.items() if key in labels}
+            if LAST_ERROR:
+                errors.append(LAST_ERROR)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Ark: {type(exc).__name__}: {exc}")
+    if DSH_VISION_URL:
+        try:
+            rows = _analyze_dsh(selected, prompt=prompt, normalize=_normalize_beats)
+            if rows:
+                return {key: value for key, value in rows.items() if key in labels}
+            if LAST_ERROR:
+                errors.append(LAST_ERROR)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"DSH: {type(exc).__name__}: {exc}")
+    LAST_ERROR = " | ".join(errors)[:400] or "没有可用的描述模型"
+    return {}
 def analyze_frames(frames: list[dict[str, Any]], *, max_frames: int = 6) -> dict[str, dict[str, Any]]:
     """Return visual tags keyed by beat id. Empty dict means unavailable."""
     global LAST_ERROR, LAST_PROVIDER, LAST_MODEL, LAST_ESCALATED

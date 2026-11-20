@@ -134,14 +134,6 @@ async function listAssets(supervisor, { kind = '', limit = 20 } = {}) {
   return readJson(res)
 }
 
-async function listPersonas(supervisor) {
-  const base = await ensureEngine(supervisor)
-  const res = await fetch(`${base}${API}/personas`, {
-    headers: { 'x-adplus-token': supervisor.token || '' },
-  })
-  return readJson(res)
-}
-
 async function transcribeAudio(supervisor, body) {
   const base = await ensureEngine(supervisor)
   const res = await fetch(`${base}${API}/transcribe`, {
@@ -229,19 +221,17 @@ export function registerAdclipTools(ctx, supervisor) {
   disposers.push(ctx.tools.register(defineTool({
     name: 'adclip_remake_video',
     description:
-      'Start an AdClip viral remake from a reference video and optional product/persona images. '
-      + 'Preserves the reference camera, scene, action, composition, rhythm and audio; replaces only the '
-      + 'specified people/products unless the user explicitly overrides a scene element. The engine selects '
+      'Start an AdClip viral remake from a reference video and optional product images. '
+      + 'Preserves the reference camera, scene, action, composition, rhythm, audio and the on-screen person; '
+      + 'replaces only the product unless the user explicitly asks to change something. The engine selects '
       + 'the best available model automatically; do not ask the user to choose a model. Returns a run id; '
       + 'poll with adclip_get_run.',
     parameters: {
       reference: { type: 'string', required: true, description: 'Absolute local path or AdClip asset id of the reference video (4–15s, ≤50MB).' },
       products: { type: 'array', items: { type: 'string' }, description: 'Absolute image paths or asset ids; first is the main product, max 3.' },
-      personas: { type: 'array', items: { type: 'string' }, description: 'Absolute image paths or asset ids for the replacement person(s), max 3.' },
       brief: { type: 'string', description: 'Product, selling points, price and explicit change requests.' },
       explicit_overrides: { type: 'string', description: 'Only when the user explicitly asks to change a scene, prop, action or line.' },
-      replace_scope: { type: 'string', enum: ['both', 'product', 'person'], description: 'What to replace; default both.' },
-      person_scope: { type: 'string', enum: ['main', 'all'], description: 'Replace the main person or all people; default main.' },
+      replace_scope: { type: 'string', enum: ['product', 'none'], description: 'product replaces the product; none keeps everything. Default: product when product images are given, otherwise none.' },
       wait_seconds: { type: 'integer', description: '0 returns immediately; 1–90 waits up to that many seconds.' },
     },
     output: {
@@ -277,26 +267,20 @@ export function registerAdclipTools(ctx, supervisor) {
       const referenceId = await uploadAsset(supervisor, args.reference, 'video')
       const productIds = []
       for (const value of (args.products || []).slice(0, 3)) productIds.push(await uploadAsset(supervisor, value, 'image'))
-      const personaIds = []
-      for (const value of (args.personas || []).slice(0, 3)) personaIds.push(await uploadAsset(supervisor, value, 'image'))
-      const scope = String(args.replace_scope || 'both')
-      if (scope !== 'person' && !productIds.length) throw new Error('替换商品需要至少一张商品图')
-      if (scope !== 'product' && !personaIds.length) throw new Error('替换人物需要至少一张模特图')
+      const scope = String(args.replace_scope || (productIds.length ? 'product' : 'none'))
+      if (scope === 'product' && !productIds.length) throw new Error('替换商品需要至少一张商品图')
       const data = await createRun(supervisor, {
         scenario: 'viral-remake',
         inputs: {
           reference_asset_id: referenceId,
           product_asset_ids: productIds,
-          persona_asset_ids: personaIds,
           brief: String(args.brief || ''),
           explicit_overrides: String(args.explicit_overrides || ''),
         },
         advanced: {
           model: 'auto',
           remake_mode: 'auto',
-          replace_scope: String(args.replace_scope || 'both'),
-          person_scope: String(args.person_scope || 'main'),
-          persona: personaIds.length ? { reference_images: personaIds } : undefined,
+          replace_scope: scope,
         },
       })
       const created = data.run || {}
@@ -449,49 +433,6 @@ export function registerAdclipTools(ctx, supervisor) {
     },
   })))
 
-  disposers.push(ctx.tools.register(defineTool({
-    name: 'adclip_list_personas',
-    description: 'List saved AdClip personas so the agent can reuse an approved person in a video.',
-    parameters: {},
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          personas: {
-            type: 'array',
-            required: true,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                id: { type: 'string', required: true },
-                name: { type: 'string' },
-                gender: { type: 'string' },
-                age: { type: 'string' },
-                body_type: { type: 'string' },
-                ethnicity: { type: 'string' },
-              },
-            },
-          },
-        },
-      },
-      render: (_args, value) => [{ type: 'text', text: value.personas.map((p) => `${p.id} · ${p.name}`).join('\n') || '没有模特' }],
-    },
-    async execute() {
-      const data = await listPersonas(supervisor)
-      return {
-        personas: (data.personas || []).map((persona) => ({
-          id: persona.id,
-          name: persona.name || '',
-          gender: persona.gender || '',
-          age: persona.age || '',
-          body_type: persona.body_type || '',
-          ethnicity: persona.ethnicity || '',
-        })),
-      }
-    },
-  })))
 
   disposers.push(ctx.tools.register(defineTool({
     name: 'adclip_create_video',

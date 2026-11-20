@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.42` |
-| Python engine (`adclip.api.VERSION`) | `0.1.29` |
+| DSH plugin (`plugin/package.json`) | `0.5.45` |
+| Python engine (`adclip.api.VERSION`) | `0.1.31` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -146,6 +146,11 @@ dist/                      staged plugin artifacts (ignored)
   `build_h3_replace_prompt` identifies the cast by the `people` summary
   (count/relationship) plus an explicit "不要沿用原片人物的外貌/发型/服装/配饰"
   line. Background and lighting are preserved in every scope.
+- `replace_scope` also accepts `none` (nothing replaced). The remake form derives
+  it from the inputs — product images mean 商品, an enabled persona means 人物,
+  neither means `none` — and only shows the three selects under 「手动调整」.
+  A person replacement without a persona or person reference image is not
+  claimed in the prompt: the reference cast description is used instead.
 - Non-H3 storyboard edit/replace is transactional: failure restores the prior
   successful run and records `last_edit_error`.
 - On startup, `store.repair_segment_edit_failures()` repairs the historical
@@ -190,7 +195,14 @@ dist/                      staged plugin artifacts (ignored)
 - `analyze._aggregate_visual()` merges cast rows across a beat's frames by `key`
   (first non-empty value per field), and the analysis document carries
   `analysis.cast_roster` and `analysis.scenes` for the UI.
-- `analysis_cache.CACHE_VERSION` is `7`; bump it whenever the vision contract
+- A second pass (`vision.describe_beats`, one call for the whole reference)
+  writes a 120–200 字 narrative paragraph per shot into
+  `beat.visual.description` / `remake_plan.shots[].description`. It deliberately
+  excludes appearance/wardrobe (those stay in `cast` so a replaced person cannot
+  inherit the reference look) and is what `render_generation` uses for 画面.
+  `ADSTUDIO_DESCRIBE=0` disables it; failure falls back to field concatenation
+  and adds a warning.
+- `analysis_cache.CACHE_VERSION` is `8`; bump it whenever the vision contract
   changes or old labels will be replayed forever.
 - Failure never blocks analysis; `analysis.provider/model` records the actual
   source (`minimax`, `ark`, `dsh`) and `analysis.warnings` carries the degraded

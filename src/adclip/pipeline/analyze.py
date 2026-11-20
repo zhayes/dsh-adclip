@@ -181,7 +181,12 @@ def _pace_cps(rows: list[dict[str, Any]]) -> float | None:
 
 def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     scope = str((run.advanced or {}).get("replace_scope") or "both")
-    replace = ["商品"] if scope == "product" else ["人物"] if scope == "person" else ["人物", "商品"]
+    replace = (
+        [] if scope == "none"
+        else ["商品"] if scope == "product"
+        else ["人物"] if scope == "person"
+        else ["人物", "商品"]
+    )
     shots = []
     for index, beat in enumerate(beats):
         view = beat.get("visual") or {}
@@ -228,6 +233,7 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
             "pace_cps": _pace_cps(beat.get("dialogue_rows") or []),
             "people": people,
             "cast": cast,
+            "description": str(view.get("description") or ""),
             "product": {
                 "name": product_name,
                 "appearance": str(view.get("product_appearance") or ""),
@@ -758,13 +764,48 @@ def analyze(run_id: str) -> dict[str, Any]:
                     "source": "vlm",
                 }
     vision_error = str(getattr(vision, "LAST_ERROR", "") or "").strip()
-    plan = _remake_plan(run, beats, facts, visual)
-    plan["source"]["cuts_s"] = cuts
     provider = str(getattr(vision, "LAST_PROVIDER", "") or "")
     model = str(getattr(vision, "LAST_MODEL", "") or "")
+    # Second pass: one flowing description per shot. The per-frame tags are facts
+    # a renderer can only concatenate; a short paragraph is what a prompt needs.
+    # Appearance stays out of it on purpose: the cast fields already carry it and
+    # a replaced person must not inherit the reference look.
+    describe_meta: dict[str, Any] = {"shots": 0, "provider": "", "model": "", "error": ""}
+    if visual and analysis_frames:
+        describe_beats = [
+            {
+                "id": beat.get("id"),
+                "start_s": beat.get("start_s"),
+                "end_s": beat.get("end_s"),
+                "dialogue_text": " ".join(
+                    str(row.get("text") or "") for row in (beat.get("dialogue_rows") or [])
+                ),
+            }
+            for beat in beats
+        ]
+        try:
+            described = vision.describe_beats(analysis_frames, describe_beats)
+        except Exception as exc:  # noqa: BLE001
+            described = {}
+            describe_meta["error"] = f"{type(exc).__name__}: {exc}"[:200]
+        for beat in beats:
+            text = str(described.get(str(beat.get("id"))) or "").strip()
+            if text:
+                beat.setdefault("visual", {})["description"] = text
+        describe_meta.update({
+            "shots": sum(1 for beat in beats if str((beat.get("visual") or {}).get("description") or "").strip()),
+            "provider": str(getattr(vision, "LAST_PROVIDER", "") or ""),
+            "model": str(getattr(vision, "LAST_MODEL", "") or ""),
+        })
+        if not describe_meta["shots"] and not describe_meta["error"]:
+            describe_meta["error"] = str(getattr(vision, "LAST_ERROR", "") or "")[:200]
+    plan = _remake_plan(run, beats, facts, visual)
+    plan["source"]["cuts_s"] = cuts
     warnings = []
     if visual and provider == "dsh":
         warnings.append(f"视觉标签由 DSH 文本模型 {model or 'auto'} 生成")
+    if visual and not describe_meta["shots"]:
+        warnings.append("镜头描述未生成，提示词退回字段拼接" + (f"：{describe_meta['error']}" if describe_meta.get("error") else ""))
     if not visual:
         warnings.append("视觉标签不可用，拆解为启发式结果")
         if vision_error:
@@ -800,6 +841,7 @@ def analyze(run_id: str) -> dict[str, Any]:
         "warnings": warnings,
         "cast_roster": _cast_roster(plan.get("shots") or []),
         "scenes": _scene_roster(plan.get("shots") or []),
+        "describe": describe_meta,
         "asr": {
             "source": asr_source,
             "model": str(getattr(asr, "LAST_MODEL", "") or "") if asr_source == "asr" else "",

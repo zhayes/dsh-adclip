@@ -20,6 +20,7 @@ from adclip.pipeline import analyze, remake, remake_spec, segment  # noqa: E402
 APPEARANCE = "40岁左右亚洲男性，戴黑框眼镜，短寸头"
 WARDROBE = "深蓝色西装外套，内搭白衬衫"
 BACKGROUND = "明亮蓝天白云下的工业厂房前水泥空地，右侧停着白色厢式货车"
+DESCRIPTION = "男子先抬手示意镜头，随后双手把纸箱举到胸前，表情从微笑转为兴奋，背景是厂房前的空地和蓝天，画面下方压着一角纸箱。"
 
 
 def _frame_payload() -> dict:
@@ -100,10 +101,12 @@ def check_aggregate_merge() -> None:
     assert merged["background"] == BACKGROUND, merged
 
 
-def _run(scope: str = "both", persona: dict | None = None) -> SimpleNamespace:
+def _run(scope: str = "both", persona: dict | None = None, person_map: dict | None = None) -> SimpleNamespace:
     advanced = {"replace_scope": scope, "aspect": "9:16", "duration": 12}
     if persona:
         advanced["persona"] = persona
+    if person_map:
+        advanced["persona_map"] = person_map
     return SimpleNamespace(
         scenario="viral-remake",
         inputs={"brief": "", "reference_asset_id": "a1"},
@@ -132,6 +135,7 @@ def _skeleton() -> dict:
         "scene": "货车旁",
         "background": BACKGROUND,
         "lighting": "日光充足，右侧偏亮，阴影短",
+        "description": DESCRIPTION,
         "expression": "期待微笑",
         "tone": "夸张叫卖",
         "composition": "人物居左，货车居右",
@@ -175,6 +179,7 @@ def check_plan_fields() -> None:
     assert "身穿" + WARDROBE in shot["cast"][0]["description"], shot["cast"]
     assert shot["product"]["appearance"].startswith("牛皮纸色"), shot["product"]
     assert shot["product"]["position"].startswith("画面中央"), shot["product"]
+    assert shot["description"] == DESCRIPTION, shot
 
     roster = skeleton["analysis"]["cast_roster"]
     assert roster and APPEARANCE in roster[0]["description"], roster
@@ -187,21 +192,41 @@ def check_generation_prompt() -> None:
     # Product-only replacement keeps the reference person, so the cast look is
     # part of what the model must reproduce.
     text = remake_spec.render_generation(remake_spec.build_spec(_run(scope="product"), skeleton, _script()))
-    assert "【场景】" in text and "工业厂房" in text, text
-    assert "光线日光充足" in text, text
-    assert "【人物】" in text and "戴黑框眼镜" in text and "深蓝色西装" in text, text
-    # The first shot's background lives in 【场景】 and is not repeated per shot.
-    assert text.count("工业厂房") == 1, text
+    # The synthesized paragraph is the 画面 body, with the cast look prepended;
+    # the field list is not repeated.
+    assert DESCRIPTION in text, text
+    assert "画面：" + APPEARANCE in text, text
+    assert "站在车厢红布前" not in text, text
+    # With a paragraph per shot the cast is the first clause of 画面 and the
+    # environment is inside the paragraph, so neither header is repeated.
+    assert "【人物】" not in text, text
+    assert "【场景】" not in text, text
 
     persona_text = remake_spec.render_generation(remake_spec.build_spec(
         _run(scope="product", persona={"gender": "female", "age": "youth", "body_type": "standard"}), skeleton, _script()
     ))
     assert "戴黑框眼镜" not in persona_text, "persona must replace the reference look"
-    assert "【场景】" in persona_text, "background survives a persona swap"
+    assert "【人物】" in persona_text and "标准体型" in persona_text, persona_text
+    assert DESCRIPTION in persona_text, "the paragraph still describes the action"
 
-    replaced_text = remake_spec.render_generation(remake_spec.build_spec(_run(scope="person"), skeleton, _script()))
-    assert "戴黑框眼镜" not in replaced_text, "a replaced person must not inherit the reference look"
-    assert "工业厂房" in replaced_text, "only the person is replaced, the background stays"
+    # No persona and no person reference image: there is nothing to replace the
+    # person with, so the reference look has to reach the prompt.
+    unsourced = remake_spec.render_generation(remake_spec.build_spec(_run(scope="person"), skeleton, _script()))
+    assert "戴黑框眼镜" in unsourced, unsourced
+    assert "只替换：无（全部保留）" in unsourced, unsourced
+    assert "人物全部替换" not in unsourced, unsourced
+    assert unsourced.count("戴黑框眼镜") == 1, "a single shot must not repeat the roster"
+
+    # A person reference image is a real replacement source: suppress the look.
+    supplied = remake_spec.render_generation(remake_spec.build_spec(
+        _run(scope="person", person_map={"A": "p1"}), skeleton, _script()
+    ))
+    assert "戴黑框眼镜" not in supplied, supplied
+    assert "人物参考图=替换后的人物" in supplied, supplied
+
+    # Replacing the product drops props that name the reference packaging.
+    assert "美工刀" not in text, text
+    assert text.count("戴黑框眼镜") == 1, text
 
 
 def check_h3_prompt() -> None:
@@ -212,6 +237,7 @@ def check_h3_prompt() -> None:
     assert "戴黑框眼镜" not in text, "appearance must not leak into a replaced person"
     assert "不要沿用原片人物的外貌" in text, text
     assert "背景" in text and "光线" in text, text
+    assert DESCRIPTION not in text, "H3 sees the video; the paragraph is for generation only"
 
 
 def check_segment_fields() -> None:
@@ -224,6 +250,24 @@ def check_segment_fields() -> None:
     assert row["expression"] == "期待微笑", row
 
 
+def check_describe_contract() -> None:
+    rows = vision._normalize_beats({"beats": [{"id": "b0", "description": "先抬头，再举袋。"}]}, ["b0", "b1"])
+    assert rows == {"b0": "先抬头，再举袋。"}, rows
+    manifest = vision._beat_manifest(
+        [{"id": "b0", "start_s": 0, "end_s": 4, "dialogue_text": "你好"}],
+        [{"id": "f1", "beat_id": "b0"}, {"id": "f2", "beat_id": "b1"}],
+    )
+    assert "镜头 b0" in manifest and "f1" in manifest and "f2" not in manifest, manifest
+    assert "台词：你好" in manifest, manifest
+
+
+def check_none_scope() -> None:
+    skeleton = _skeleton()
+    text = remake_spec.render_generation(remake_spec.build_spec(_run(scope="none"), skeleton, _script()))
+    assert "只替换：无（全部保留）" in text, text
+    assert "【替换】只替换：商品" not in text, text
+
+
 def main() -> None:
     check_vision_normalize()
     check_aggregate_merge()
@@ -231,6 +275,8 @@ def main() -> None:
     check_generation_prompt()
     check_h3_prompt()
     check_segment_fields()
+    check_describe_contract()
+    check_none_scope()
     print("adclip analysis detail: ok")
 
 

@@ -62,7 +62,7 @@ def post(run_id: str) -> dict[str, Any]:
                     warnings.append("参考片没有可用音轨，保留 H3 生成音频")
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"替换参考音轨失败，保留 H3 音频：{type(exc).__name__}: {exc}"[:240])
-    elif run.scenario == "viral-remake" and audio_mode == "preserve" and replace_scope == "person":
+    elif run.scenario == "viral-remake" and audio_mode == "preserve" and replace_scope in {"person", "none"}:
         # Only person replacement may keep the original voice: a new product name
         # or price would otherwise survive in the old audio track.
         ref_id = (run.inputs or {}).get("reference_asset_id")

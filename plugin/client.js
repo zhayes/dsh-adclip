@@ -217,6 +217,9 @@ window.__ModuleLoader__.load({
 .adp-recent-main b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adp-recent-main span{font-size:10.5px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adp-recent-open{font-size:10.5px;color:#C99B54;white-space:nowrap}
+.adp-auto-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-2)}
+.adp-auto-title{font-size:10px;letter-spacing:.06em;color:#C99B54}
+.adp-auto-text{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:normal}
 .adp-composer-input:disabled{opacity:.6;cursor:not-allowed}
 .adp-chatpage{max-width:900px;height:calc(100dvh - 128px);min-height:560px;display:flex;flex-direction:column;margin:0 auto}
 .adp-chat-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin:0 0 8px;flex:0 0 auto}
@@ -1031,17 +1034,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PersonaFields({ value, onChange, columns = 4 }) {
-      const v = value || {}
-      const set = (key, val) => onChange(Object.assign({}, v, { [key]: val }))
-      return h('div', { className: 'adp-field-grid g' + columns },
-        h(FormSelect, { label: '性别', value: v.gender || 'any', onChange: (x) => set('gender', x), options: [{ value: 'any', label: '不限' }, { value: 'female', label: '女' }, { value: 'male', label: '男' }] }),
-        h(FormSelect, { label: '年龄', value: v.age || 'youth', onChange: (x) => set('age', x), options: [{ value: 'teenager', label: '18–24 青年感' }, { value: 'youth', label: '25–34 青年' }, { value: 'middle_aged', label: '35–54 中年' }, { value: 'senior', label: '55+ 老年' }] }),
-        h(FormSelect, { label: '体型', value: v.body_type || 'standard', onChange: (x) => set('body_type', x), options: [{ value: 'slim', label: '偏瘦' }, { value: 'standard', label: '标准' }, { value: 'athletic', label: '健硕' }, { value: 'chubby', label: '微胖' }] }),
-        h(FormSelect, { label: '族裔', value: v.ethnicity || 'asian', onChange: (x) => set('ethnicity', x), options: [{ value: 'asian', label: '亚洲' }, { value: 'caucasian', label: '欧美' }, { value: 'latino', label: '拉美' }, { value: 'african', label: '非洲' }, { value: 'middle_eastern', label: '中东' }, { value: 'any', label: '不限' }] })
-      )
-    }
-
     function AdvancedRow({ value, onChange, models, needsDialogue, autoModel, autoTiming, timingNote, aspectNote }) {
       const v = value || {}
       const set = (key, val) => onChange(Object.assign({}, v, { [key]: val }))
@@ -1167,6 +1159,7 @@ window.__ModuleLoader__.load({
       const [editOpen, setEditOpen] = useState(false)
       const [promptOpen, setPromptOpen] = useState(false)
       const [promptText, setPromptText] = useState('')
+      const promptRef = useRef(null)
       const [promptMeta, setPromptMeta] = useState(null)
       const [promptBusy, setPromptBusy] = useState('')
       const [promptSaved, setPromptSaved] = useState(false)
@@ -1202,6 +1195,9 @@ window.__ModuleLoader__.load({
       // soon as the run parks, and again if the card is clicked later.
       useEffect(() => { setConfirmOpen(run.status === 'awaiting_confirm') }, [run.id, run.status])
       useEffect(() => { if (confirmOpen && awaiting) void loadPrompt() }, [confirmOpen, awaiting, run.id])
+      // 提示词很长时，textarea 会保留上次的滚动位置；打开时回到开头，
+      // 否则看起来像“丢了”【任务】【场景】【人物】这几段。
+      useEffect(() => { if (promptOpen && promptBusy === '' && promptRef.current) promptRef.current.scrollTop = 0 }, [promptOpen, promptBusy])
 
       const loadPrompt = useCallback(async () => {
         setPromptBusy('load'); setErr('')
@@ -1466,7 +1462,7 @@ window.__ModuleLoader__.load({
               ) : h('div', { className: 'adp-small adp-muted' }, '无商品图'),
               h('div', { className: 'adp-asset-line' },
                 h('span', { className: 'adp-asset-tag' }, '模特'),
-                h('span', { className: 'adp-small adp-muted' }, [persona.gender, persona.age, persona.body_type, persona.ethnicity].filter(Boolean).join(' · ') || '未指定')
+                h('span', { className: 'adp-small adp-muted' }, [persona.gender, persona.age, persona.body_type, persona.ethnicity].filter(Boolean).join(' · ') || '沿用参考片')
               )
             )
           )
@@ -1592,6 +1588,7 @@ window.__ModuleLoader__.load({
           ),
           promptOpen ? h('div', { className: 'adp-col', style: { padding: '0 14px 14px', gap: 8 } },
             h('textarea', {
+              ref: promptRef,
               className: 'adp-input',
               style: { minHeight: 220, resize: 'vertical', fontFamily: 'inherit', fontSize: 12, lineHeight: 1.55 },
               value: promptText,
@@ -1657,7 +1654,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function RecreateTab({ models, runs, onOpen, onStarted, personas, onRefreshPersonas }) {
+    function RecreateTab({ models, runs, onOpen, onStarted }) {
       const [refAsset, setRefAsset] = useState(null)
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
@@ -1665,19 +1662,21 @@ window.__ModuleLoader__.load({
       // Default: go straight to generation. Unchecking pauses after the prompt is
       // rendered so it can be reviewed before spending a generation.
       const [skipConfirm, setSkipConfirm] = useState(true)
-      const [replaceScope, setReplaceScope] = useState('both')
-      const [personScope, setPersonScope] = useState('main')
+      const [replaceScope, setReplaceScope] = useState('product')
       const [audioMode, setAudioMode] = useState('regenerate')
-      const preserveAllowed = replaceScope === 'person'
-      useEffect(() => { if (!preserveAllowed && audioMode === 'preserve') setAudioMode('regenerate') }, [preserveAllowed, audioMode])
       const [touched, setTouched] = useState({})
       const [detected, setDetected] = useState(() => detectVideoParams(''))
       const [preview, setPreview] = useState(null)
-      const [persona, setPersona] = useState({ gender: 'any', age: 'youth', body_type: 'standard', ethnicity: 'asian' })
-      const [personaEnabled, setPersonaEnabled] = useState(false)
-      const [personaId, setPersonaId] = useState('')
+      // 复刻默认不动人物：只有商品图决定换商品，没图就完整沿用参考片。
+      // 要改人物时写在需求描述里，由脚本/提示词处理。
+      const [manualSettings, setManualSettings] = useState(false)
+      const hasProducts = products.length > 0
+      const derivedScope = hasProducts ? 'product' : 'none'
+      const effectiveScope = manualSettings ? replaceScope : derivedScope
+      const effectiveAudio = manualSettings ? audioMode : 'regenerate'
+      const preserveAllowed = effectiveScope === 'none'
+      useEffect(() => { if (!preserveAllowed && audioMode === 'preserve') setAudioMode('regenerate') }, [preserveAllowed, audioMode])
       const [busy, setBusy] = useState(false)
-      const [personaBusy, setPersonaBusy] = useState(false)
       const [err, setErr] = useState('')
       const usableModels = (models || []).filter((m) => m.available && m.enabled !== false)
       const hasRealModel = usableModels.length > 0
@@ -1691,7 +1690,6 @@ window.__ModuleLoader__.load({
           return pick ? Object.assign({}, prev, { model: pick }) : prev
         })
       }, [models])
-      const selectedPersona = (personas || []).find((p) => p.id === personaId)
       useEffect(() => { setDetected(detectVideoParams(brief)) }, [brief])
       const changeAdvanced = (next) => {
         const changed = {}
@@ -1708,14 +1706,6 @@ window.__ModuleLoader__.load({
       if (detected.duration && Number(detected.duration) !== Number(advanced.duration)) overrides.push('时长 ' + detected.duration + 's（控件 ' + advanced.duration + 's）')
       if (detected.resolution && detected.resolution !== advanced.resolution) overrides.push('清晰度 ' + detected.resolution + '（控件 ' + advanced.resolution + '）')
       if (detected.subtitle && detected.subtitle !== (advanced.subtitle || 'off')) overrides.push('字幕 ' + subtitleLabel(detected.subtitle) + '（控件 ' + subtitleLabel(advanced.subtitle) + '）')
-      const savePersona = async () => {
-        setPersonaBusy(true); setErr('')
-        try {
-          const created = await api('/personas', { method: 'POST', body: Object.assign({ name: '模特 ' + ((personas || []).length + 1), type: 'ai', consent: { confirmed: true, note: '运营创建' } }, persona) })
-          setPersonaId(created.persona.id)
-          onRefreshPersonas && await onRefreshPersonas()
-        } catch (e) { setErr(String(e.message || e)) } finally { setPersonaBusy(false) }
-      }
       const start = async () => {
         if (!refAsset) { setErr('请先上传参考视频'); return }
         if (imageOnly && !products.length) { setErr('当前模型是图生视频，请先上传至少一张商品图'); return }
@@ -1739,21 +1729,27 @@ window.__ModuleLoader__.load({
           if (next.subtitle) merged.subtitle = next.subtitle
           const vendorModel = modelForVendor(next.vendor, models)
           if (vendorModel) merged.model = vendorModel
-          const personaPayload = personaEnabled ? { persona, persona_map: personaId ? { A: personaId, B: personaId } : {} } : {}
           const data = await api('/runs', { method: 'POST', body: {
             scenario: 'viral-remake',
             inputs: { reference_asset_id: refAsset.id, product_asset_ids: products.map(p => p.id), brief },
-            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: replaceScope, person_scope: personScope, audio_mode: audioMode, prompt_confirm: !skipConfirm }, personaPayload),
+            advanced: Object.assign({}, merged, { model: 'auto', remake_mode: 'auto', replace_scope: effectiveScope, audio_mode: effectiveAudio, prompt_confirm: !skipConfirm }),
           } })
           onStarted(data.run)
           // A submitted remake is done: clear the form so the next visit starts empty.
           setBrief(''); setRefAsset(null); setProducts([]); setPreview(null)
           setSkipConfirm(true)
-          setPersonaEnabled(false); setPersonaId('')
+          setManualSettings(false)
           setDetected(detectVideoParams('')); setTouched({})
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
       const recent = (runs || []).filter((run) => run.scenario === 'viral-remake').slice(0, 5)
+      const scopeLabel = { product: '商品', none: '不替换（全部沿用参考片）' }[effectiveScope] || effectiveScope
+      const withProducts = effectiveScope === 'product' && products.length
+      const scopeSummary = [
+        '将替换：' + (withProducts ? scopeLabel + '（图片 1–' + products.length + '）' : scopeLabel),
+        effectiveScope === 'product' ? '人物：沿用参考片' : '',
+        '声音：' + (effectiveAudio === 'preserve' ? '保留原声' : '按新台词生成'),
+      ].filter(Boolean).join(' · ')
       return h('div', { className: 'adp-page' },
         h('div', { className: 'adp-page-head' },
           h('div', null,
@@ -1812,48 +1808,22 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'adp-section-title' }, '生成设置')
               ),
               h(AdvancedRow, { value: advanced, onChange: changeAdvanced, models, needsDialogue: true, autoModel: true, autoTiming: true, timingNote: refAsset && refAsset.duration_s ? '跟随参考片 · ' + Number(refAsset.duration_s).toFixed(1) + 's' : '自动解析参考片', aspectNote: refAsset && refAsset.width && refAsset.height ? '跟随参考片 · ' + (refAsset.height > refAsset.width * 1.15 ? '9:16' : refAsset.width > refAsset.height * 1.15 ? '16:9' : '1:1') : '自动解析参考片' }),
-              h('div', { className: 'adp-field-grid g3' },
-                h(FormSelect, { label: '替换内容', value: replaceScope, onChange: setReplaceScope, options: [{ value: 'both', label: '人物 + 商品' }, { value: 'product', label: '只换商品' }, { value: 'person', label: '只换人物' }] }),
-                h(FormSelect, { label: '人物范围', value: personScope, onChange: setPersonScope, options: [{ value: 'main', label: '只换主角' }, { value: 'all', label: '全部人物' }] }),
-                h(FormSelect, { label: '声音', value: audioMode, onChange: setAudioMode, options: preserveAllowed ? [{ value: 'regenerate', label: '按新台词生成' }, { value: 'preserve', label: '保留原声' }] : [{ value: 'regenerate', label: '按新台词生成' }] })
+              h('div', { className: 'adp-auto-row' },
+                h('div', { className: 'adp-grow' },
+                  h('div', { className: 'adp-auto-title' }, '自动判定'),
+                  h('div', { className: 'adp-auto-text' }, scopeSummary)
+                ),
+                h('button', { className: 'adp-btn ghost', onClick: () => setManualSettings((value) => !value) }, manualSettings ? '收起手动' : '手动调整')
               ),
-              h('div', { className: 'adp-hint' }, preserveAllowed ? '只换人物时可以保留原声；换商品会自动改为按新台词生成，避免旧产品名/旧价格残留在口播里。' : '换商品必须按新台词生成：参考片会去音轨后交给 H3，避免旧产品名/旧价格叠加。'),
+              manualSettings ? h('div', { className: 'adp-field-grid g2' },
+                h(FormSelect, { label: '替换内容', value: replaceScope, onChange: setReplaceScope, options: [{ value: 'product', label: '换商品' }, { value: 'none', label: '不替换（全部沿用参考片）' }] }),
+                h(FormSelect, { label: '声音', value: audioMode, onChange: setAudioMode, options: preserveAllowed ? [{ value: 'regenerate', label: '按新台词生成' }, { value: 'preserve', label: '保留原声' }] : [{ value: 'regenerate', label: '按新台词生成' }] })
+              ) : null,
+              h('div', { className: 'adp-hint' }, manualSettings
+                ? (preserveAllowed ? '手动模式：不替换商品时可以保留原声；换商品时引擎会强制改为按新台词生成。' : '手动模式：换商品必须按新台词生成，避免旧产品名/旧价格残留在口播里。')
+                : '按上传素材自动决定：传了商品图就换商品，没传就完整沿用参考片；人物默认不动。'),
               imageOnly ? h('div', { className: 'adp-hint' }, '当前模型是图生视频：需要至少一张商品图；无原生音频。') : null,
               overrides.length ? h('div', { className: 'adp-conflict', style: { margin: '7px 0 0' } }, h('b', null, '描述优先'), overrides.join('；')) : null,
-              h('div', { className: 'adp-section-head' },
-                h('span', { className: 'adp-step' }, '04'),
-                h('span', { className: 'adp-section-title' }, '模特'),
-                h('span', { className: 'adp-section-note' }, '先定人，再定片')
-              ),
-              h('div', { className: 'adp-persona-inline' },
-                h('label', { className: 'adp-check', style: { marginTop: 0 } },
-                  h('input', { type: 'checkbox', checked: personaEnabled, onChange: (e) => { const on = e.currentTarget.checked; setPersonaEnabled(on); if (!on) setPersonaId('') } }),
-                  '本次使用模特设定'
-                ),
-                h('div', { className: 'adp-persona-status' },
-                  h(Badge, { status: personaEnabled ? (personaId ? 'ok' : '') : '' }, personaEnabled ? (personaId ? '已选：' + (selectedPersona ? selectedPersona.name : '已保存模特') : '本次自定义') : '本次不使用模特'),
-                  h('span', { className: 'adp-small adp-muted' }, personaEnabled ? (personaId ? '下方字段已带入；修改任意字段会切换为本次自定义，不会改动已保存模特。' : '以下字段只影响本次生成，不会修改模特库。') : '原片没有人物、或不需要改人物时保持关闭；不会把模特写进生成要求。')
-                ),
-                h('div', { className: personaEnabled ? '' : 'adp-persona-off' },
-                  h('div', { className: 'adp-persona-source' },
-                    h('div', { className: 'adp-field-label' }, '已保存模特（可选）'),
-                    h('select', { className: 'adp-select', value: personaId, disabled: !personaEnabled, onChange: (e) => {
-                      const id = e.currentTarget.value
-                      setPersonaId(id)
-                      const found = (personas || []).find(p => p.id === id)
-                      if (found) { setPersona({ gender: found.gender || 'any', age: found.age || 'youth', body_type: found.body_type || 'standard', ethnicity: found.ethnicity || 'asian' }); setPersonaEnabled(true) }
-                    } },
-                      h('option', { value: '' }, '本次自定义'),
-                      (personas || []).map(p => h('option', { key: p.id, value: p.id }, p.name + ' · ' + (p.gender === 'female' ? '女' : p.gender === 'male' ? '男' : '不限') + ' · ' + (p.age || '')))
-                    )
-                  ),
-                  h(PersonaFields, { value: persona, onChange: (v) => { setPersonaId(''); setPersona(v) } })
-                ),
-                h('div', { className: 'adp-persona-actions' },
-                  h('button', { className: 'adp-btn ghost', onClick: savePersona, disabled: !personaEnabled || personaBusy }, personaBusy ? '保存中…' : (personaId ? '另存为副本' : '另存为模特')),
-                  h('span', { className: 'adp-hint' }, personaEnabled ? (personaId ? '不会覆盖当前选中的已保存模特' : '保存后可在模特库复用') : '关闭时不会影响原片人物或生成 prompt')
-                )
-              ),
               h('div', { className: 'adp-actionbar' },
                 h('div', { className: 'adp-action-note' },
                   !refAsset ? h('span', { style: { color: '#C99B54' } }, '先上传参考视频。') : (hasRealModel ? '将使用已配置的模型；生成通常需要几分钟。' : '还没有可用的视频模型，先去「设置」里配置厂商 key。'),
@@ -2743,101 +2713,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PersonasTab({ personas, onRefresh }) {
-      const empty = () => ({ name: '', type: 'ai', gender: 'any', age: 'youth', body_type: 'standard', ethnicity: 'asian', exact_age: '', height_cm: '', hair: '', outfit: '', temperament: '', voice_tone: '', role: 'both', consent: { confirmed: false, note: '' } })
-      const [open, setOpen] = useState(false)
-      const [form, setForm] = useState(empty)
-      const [editingId, setEditingId] = useState('')
-      const [busy, setBusy] = useState('')
-      const [err, setErr] = useState('')
-      const set = (key, value) => setForm((prev) => Object.assign({}, prev, { [key]: value }))
-      const openNew = () => { setEditingId(''); setForm(empty()); setErr(''); setOpen(true) }
-      const openEdit = (persona) => { setEditingId(persona.id); setForm(Object.assign(empty(), persona)); setErr(''); setOpen(true) }
-      const close = () => { if (busy === 'save') return; setOpen(false); setEditingId(''); setErr('') }
-      const save = async () => {
-        setBusy('save'); setErr('')
-        try {
-          const payload = Object.assign({}, form)
-          payload.name = String(payload.name || '').trim() || '未命名模特'
-          if (payload.exact_age === '' || payload.exact_age == null) delete payload.exact_age
-          if (payload.height_cm === '' || payload.height_cm == null) delete payload.height_cm
-          if (payload.type === 'real' && !(payload.consent && payload.consent.confirmed)) throw new Error('真人模特必须勾选授权')
-          await api(editingId ? '/personas/' + editingId : '/personas', { method: editingId ? 'PATCH' : 'POST', body: payload })
-          await onRefresh(); close()
-        } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
-      }
-      const remove = async (persona) => {
-        if (!window.confirm('删除模特「' + persona.name + '」？')) return
-        setBusy('remove:' + persona.id); setErr('')
-        try { await api('/personas/' + persona.id, { method: 'DELETE' }); await onRefresh(); if (editingId === persona.id) close() } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
-      }
-      const summary = (p) => [p.gender, p.age, p.body_type, p.ethnicity].filter(Boolean).join(' · ')
-      return h('div', { className: 'adp-page' },
-        h('div', { className: 'adp-page-head' },
-          h('div', null, h('div', { className: 'adp-eyebrow' }, 'CAST LIBRARY'), h('h1', { className: 'adp-title' }, '模特库')),
-          h('button', { className: 'adp-btn primary', onClick: openNew }, '新建模特')
-        ),
-        h('div', { className: 'adp-persona-grid' },
-          (personas || []).map((p) => h('div', { key: p.id, className: 'adp-persona-card' },
-            h('div', { className: 'adp-row' }, h('div', { className: 'adp-h2 adp-grow' }, p.name || '未命名'), h(Badge, { status: p.type === 'real' ? (p.consent && p.consent.confirmed ? 'ok' : 'bad') : '' }, p.type === 'real' ? '真人' : p.type === 'group' ? '群像' : 'AI')),
-            h('div', { className: 'adp-small adp-muted', style: { marginTop: 4 } }, summary(p) || '未设置'),
-            h('div', { className: 'adp-small adp-faint', style: { marginTop: 3 } }, '角色：' + ({ both: '出镜+口播', A: '口播 A', B: '口播 B', group: '群像' }[p.role] || p.role || '—') + (p.used_in_runs && p.used_in_runs.length ? ' · 已用 ' + p.used_in_runs.length + ' 次' : '')),
-            h('div', { className: 'adp-row', style: { marginTop: 10 } },
-              h('button', { className: 'adp-btn', onClick: () => openEdit(p) }, '编辑'),
-              h('button', { className: 'adp-btn danger', onClick: () => remove(p), disabled: busy === 'remove:' + p.id }, '删除')
-            )
-          )),
-          !(personas || []).length ? h('div', { className: 'adp-empty-state' }, h('div', { className: 'adp-h2' }, '还没有模特'), h('div', { className: 'adp-small adp-muted' }, '新建一个角色，之后在爆款复刻里直接复用。'), h('button', { className: 'adp-btn primary', onClick: openNew }, '新建模特')) : null
-        ),
-        err && !open ? h('div', { className: 'adp-error', style: { marginTop: 12 } }, err) : null,
-        open ? h('div', { className: 'adp-modal-backdrop', onClick: close },
-          h('div', { className: 'adp-modal adp-persona-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '编辑模特', onClick: (e) => e.stopPropagation() },
-            h('div', { className: 'adp-modal-head' },
-              h('div', null, h('div', { className: 'adp-h2' }, editingId ? '编辑模特' : '新建模特'), h('div', { className: 'adp-small adp-muted' }, '固定人物设定，复用到不同片子。')),
-              h('button', { className: 'adp-icon-btn', onClick: close, title: '关闭' }, h(Glyph, { name: 'close' }))
-            ),
-            h('div', { className: 'adp-modal-body' },
-              h('div', { className: 'adp-modal-section' },
-                h('div', { className: 'adp-modal-section-title' }, '基础信息'),
-                h('div', { className: 'adp-field-grid g2' },
-                  h(Field, { label: '名称', style: { gridColumn: '1 / -1' } }, h('input', { className: 'adp-input', value: form.name || '', placeholder: '例如：小美·追剧场景', onChange: (e) => set('name', e.currentTarget.value) })),
-                  h(FormSelect, { label: '类型', value: form.type || 'ai', onChange: (x) => set('type', x), options: [{ value: 'ai', label: 'AI 模特' }, { value: 'real', label: '真人（需授权）' }, { value: 'group', label: '群像' }] }),
-                  h(FormSelect, { label: '角色', value: form.role || 'both', onChange: (x) => set('role', x), options: [{ value: 'both', label: '出镜+口播' }, { value: 'A', label: '口播 A' }, { value: 'B', label: '口播 B' }, { value: 'group', label: '群像' }] })
-                )
-              ),
-              h('div', { className: 'adp-modal-section' },
-                h('div', { className: 'adp-modal-section-title' }, '人物特征'),
-                h(PersonaFields, { value: form, onChange: (v) => setForm(Object.assign({}, form, v)), columns: 2 })
-              ),
-              h('div', { className: 'adp-modal-section' },
-                h('div', { className: 'adp-modal-section-title' }, '细节'),
-                h('div', { className: 'adp-field-grid g2' },
-                  h(Field, { label: '具体年龄', hint: '可选，精确控制人物年龄' }, h('input', { className: 'adp-input', type: 'number', value: form.exact_age || '', onChange: (e) => set('exact_age', e.currentTarget.value ? Number(e.currentTarget.value) : '') })),
-                  h(Field, { label: '身高 cm', hint: '可选，用于保持人物比例' }, h('input', { className: 'adp-input', type: 'number', value: form.height_cm || '', onChange: (e) => set('height_cm', e.currentTarget.value ? Number(e.currentTarget.value) : '') }))
-                )
-              ),
-              h('div', { className: 'adp-modal-section' },
-                h('div', { className: 'adp-modal-section-title' }, '风格与声线'),
-                h('div', { className: 'adp-field-grid g2' },
-                  h(Field, { label: '发型' }, h('input', { className: 'adp-input', value: form.hair || '', placeholder: '例如：低马尾', onChange: (e) => set('hair', e.currentTarget.value) })),
-                  h(Field, { label: '服装' }, h('input', { className: 'adp-input', value: form.outfit || '', placeholder: '例如：米色针织衫', onChange: (e) => set('outfit', e.currentTarget.value) })),
-                  h(Field, { label: '气质' }, h('input', { className: 'adp-input', value: form.temperament || '', placeholder: '例如：松弛、生活化', onChange: (e) => set('temperament', e.currentTarget.value) })),
-                  h(Field, { label: '声线' }, h('input', { className: 'adp-input', value: form.voice_tone || '', placeholder: '例如：偏低、语速快', onChange: (e) => set('voice_tone', e.currentTarget.value) }))
-                )
-              ),
-              form.type === 'real' ? h('label', { className: 'adp-check' }, h('input', { type: 'checkbox', checked: Boolean(form.consent && form.consent.confirmed), onChange: (e) => set('consent', { confirmed: e.currentTarget.checked, note: '模特库手动确认' }) }), '我确认已取得该真人的肖像/声音使用授权') : null,
-              err ? h('div', { className: 'adp-error' }, err) : null
-            ),
-            h('div', { className: 'adp-modal-foot' },
-              h('button', { className: 'adp-btn ghost', onClick: close }, '取消'),
-              h('button', { className: 'adp-btn primary', onClick: save, disabled: busy === 'save' }, busy === 'save' ? '保存中…' : (editingId ? '保存修改' : '创建模特'))
-            )
-          )
-        ) : null
-      )
-    }
-
-
     const REMAKE_TIER_LABELS = { full: '完整复刻', reference: '参考生成', generation: '仅生成', image_only: '图片', none: '不可用' }
 
     /** Read-only capability contract; the editable defaults sit below it. */
@@ -3258,7 +3133,6 @@ window.__ModuleLoader__.load({
       const [sidebarOpen, setSidebarOpen] = useState(false)
       const [runs, setRuns] = useState([])
       const [assets, setAssets] = useState([])
-      const [personas, setPersonas] = useState([])
       const [selected, setSelected] = useState(null)
       const [err, setErr] = useState('')
       const [engine, setEngine] = useState(null)
@@ -3272,13 +3146,13 @@ window.__ModuleLoader__.load({
         if (state) setEngine(state)
         if (state && !state.ok) return
         try {
-          const [h, m, r, a, p, d, t, c] = await Promise.all([
-            api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'), api('/personas'),
+          const [h, m, r, a, d, t, c] = await Promise.all([
+            api('/health'), api('/models'), api('/runs?limit=20'), api('/assets?limit=60'),
             api('/dsh/models').catch(() => ({ dsh: null })),
             api('/text/models').catch(() => ({ models: [] })),
             api('/capabilities').catch(() => ({ scheduling: null })),
           ])
-          setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setPersonas(p.personas || []); setDsh(d.dsh || null)
+          setHealth(h); setModels(m.models || []); setRuns(r.runs || []); setAssets(a.assets || []); setDsh(d.dsh || null)
           setTextModels(t.models || []); setScheduling(c.scheduling || null)
           setSelected(prev => prev ? (r.runs || []).find(x => x.id === prev.id) || prev : null)
         } catch (e) { if (!isTransientNetworkError(e)) setErr('加载失败：' + String(e.message || e)) }
@@ -3373,7 +3247,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'adp-brand' }, 'AdClip'),
           h('div', { className: 'adp-sub' }, 'AI AD VIDEO STUDIO'),
           h('div', { className: 'adp-tabs', style: needsSetup ? { visibility: 'hidden' } : null },
-            ['recreate', 'text', 'assets', 'personas', 'tasks', 'settings'].map(id => h('button', { key: id, className: 'adp-tab' + (tab === id ? ' on' : ''), onClick: () => { setTab(id); setSelected(null) } }, { recreate: '爆款复刻', text: '自由创作', assets: '素材', personas: '模特', tasks: '任务', settings: '设置' }[id]))
+            ['recreate', 'text', 'assets', 'tasks', 'settings'].map(id => h('button', { key: id, className: 'adp-tab' + (tab === id ? ' on' : ''), onClick: () => { setTab(id); setSelected(null) } }, { recreate: '爆款复刻', text: '自由创作', assets: '素材', tasks: '任务', settings: '设置' }[id]))
           ),
           h('div', { className: 'adp-grow' }),
           engine
@@ -3398,10 +3272,9 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'adp-btn ghost', style: { marginLeft: 8 }, onClick: () => setForceSetup(true) }, '去处理'))
               : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
-            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, runs, onOpen: openRun, onStarted: started, personas, onRefreshPersonas: refresh })),
+            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, runs, onOpen: openRun, onStarted: started })),
             h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, textModels, active: !selected && tab === 'text', onStarted: started, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
-            !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,
             !selected && tab === 'settings' ? h(SettingsTab, { health, models, assets, textModels, scheduling, onRefresh: refresh, engine, onSetup: () => setForceSetup(true) }) : null,
           )

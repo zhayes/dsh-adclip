@@ -25,22 +25,28 @@ from adclip.media import vision  # noqa: E402
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("content-length") or 0)
-        self.rfile.read(length)
+        body = self.rfile.read(length)
+        describe = "分镜描述器" in body.decode("utf-8", "ignore")
+        text = (
+            json.dumps({"beats": [{"id": "b0", "description": "先抬头示意，再把袋子举到胸前。"}]}, ensure_ascii=False)
+            if describe else
+            json.dumps({
+                "frames": [{
+                    "id": "b0",
+                    "shot_size": "中景",
+                    "action": "人物拿着苹果",
+                    "people": "一名女性",
+                    "product": "苹果",
+                    "scene": "室内",
+                    "on_screen_text": "",
+                }]
+            }, ensure_ascii=False)
+        )
         payload = {
             "dsh": {
                 "provider": "deepseek-official",
                 "model": "deepseek-flash",
-                "text": json.dumps({
-                    "frames": [{
-                        "id": "b0",
-                        "shot_size": "中景",
-                        "action": "人物拿着苹果",
-                        "people": "一名女性",
-                        "product": "苹果",
-                        "scene": "室内",
-                        "on_screen_text": "",
-                    }]
-                }, ensure_ascii=False),
+                "text": text,
             }
         }
         raw = json.dumps(payload, ensure_ascii=False).encode()
@@ -66,6 +72,14 @@ def main() -> None:
         assert rows["b0"]["product"] == "苹果", rows
         assert vision.LAST_PROVIDER == "dsh", vision.LAST_PROVIDER
         assert vision.LAST_MODEL == "deepseek-flash", vision.LAST_MODEL
+        assert vision.LAST_ERROR == "", vision.LAST_ERROR
+
+        described = vision.describe_beats(
+            [{"id": "b0", "beat_id": "b0", "start_s": 0, "end_s": 2, "path": frame}],
+            [{"id": "b0", "start_s": 0, "end_s": 2, "dialogue_text": "看这袋苹果"}],
+        )
+        assert described["b0"].startswith("先抬头示意"), described
+        assert vision.LAST_PROVIDER == "dsh", vision.LAST_PROVIDER
         assert vision.LAST_ERROR == "", vision.LAST_ERROR
     finally:
         server.shutdown()

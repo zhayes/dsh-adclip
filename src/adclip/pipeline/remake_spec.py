@@ -150,6 +150,7 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             "scene": str(shot.get("scene") or ""),
             "background": str(shot.get("background") or ""),
             "lighting": str(shot.get("lighting") or ""),
+            "description": str(shot.get("description") or ""),
             "people": str(shot.get("people") or ""),
             "action": str(script_beat.get("shot") or shot.get("action") or ""),
             "reference_action": str(shot.get("action") or ""),
@@ -177,7 +178,12 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             shot["pace_cps"] = round(float(pace), 2) if pace else None
         shot["timed_lines"] = _timed_lines(shot)
     scope = str(advanced.get("replace_scope") or "both")
-    replace = ["商品"] if scope == "product" else ["人物"] if scope == "person" else ["人物", "商品"]
+    replace = (
+        [] if scope == "none"
+        else ["商品"] if scope == "product"
+        else ["人物"] if scope == "person"
+        else ["人物", "商品"]
+    )
     return {
         "version": 1,
         "source": {
@@ -221,7 +227,19 @@ def _stamp(seconds: float) -> str:
     return f"{int(total // 60):02d}:{total % 60:05.2f}"
 
 
-def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool, include_background: bool = True) -> list[str]:
+def _cast_text(item: dict[str, Any], *, drop_props: bool = False) -> str:
+    """One cast line. When the product is replaced, the reference props often
+    name the old packaging, so only the look and outfit survive."""
+    description = str(item.get("description") or "").strip()
+    if not drop_props:
+        return description
+    look = str(item.get("appearance") or "").strip()
+    outfit = str(item.get("wardrobe") or "").strip().lstrip("穿")
+    parts = [value for value in (look, ("身穿" + outfit) if outfit else "") if value]
+    return "，".join(parts) or description
+
+
+def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool, include_background: bool = True, drop_props: bool = False, include_cast: bool = True) -> list[str]:
     """One shot as the breakdown described it, in the shape models read best.
 
     A single flowing 画面 paragraph plus a timestamped dialogue list is what a
@@ -236,8 +254,23 @@ def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replac
     scene = str(shot.get("scene") or "").strip()
     background = str(shot.get("background") or "").strip().rstrip("。")
     lighting = str(shot.get("lighting") or "").strip().rstrip("。")
+    description = str(shot.get("description") or "").strip().rstrip("。")
     visual: list[str] = []
-    if background and include_background:
+    if description:
+        # The synthesized paragraph already covers environment, lighting, the
+        # action's progress and the framing. The cast look (when it is kept) is
+        # prepended so the block reads like a hand-written description instead
+        # of a labelled list.
+        labels: list[str] = []
+        if include_cast and not persona and not people_replaced:
+            seen: dict[str, None] = {}
+            for item in shot.get("cast") or []:
+                label = _cast_text(item, drop_props=drop_props)
+                if label:
+                    seen.setdefault(label, None)
+            labels = list(seen)[:2]
+        visual.append(("、".join(labels) + "，" if labels else "") + description)
+    elif background and include_background:
         # The long background replaces the short scene label: writing both says
         # the same thing twice and pushes the dialogue block out of budget.
         visual.append(background)
@@ -245,21 +278,25 @@ def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replac
             visual.append("光线" + lighting)
     elif scene and not background:
         visual.append(scene)
-    visual.extend(value for value in (
-        str(shot.get("reference_action") or shot.get("action") or "").strip(),
-        str(shot.get("composition") or "").strip(),
-    ) if value)
+    if not description:
+        visual.extend(value for value in (
+            str(shot.get("reference_action") or shot.get("action") or "").strip(),
+            str(shot.get("composition") or "").strip(),
+        ) if value)
     if visual:
         lines.append("画面：" + "，".join(visual) + "。")
     acting = [value for value in (
-        str(shot.get("expression") or "").strip(),
+        str(shot.get("expression") or "").strip() if not description else "",
         str(shot.get("tone") or "").strip(),
     ) if value]
     if acting:
         lines.append("表演：" + "；".join(acting) + "。")
     cast = [str(item.get("description") or "").strip() for item in shot.get("cast") or [] if str(item.get("description") or "").strip()]
-    if cast and not persona and not people_replaced:
-        lines.append("人物：" + "、".join(dict.fromkeys(cast[:3])) + "。")
+    if cast and include_cast and not description and not persona and not people_replaced:
+        labels = [_cast_text(item, drop_props=drop_props) for item in shot.get("cast") or []]
+        labels = [label for label in dict.fromkeys(labels) if label]
+        if labels:
+            lines.append("人物：" + "、".join(labels[:3]) + "。")
     if index > 0 and str(shot.get("transition_in") or "cut") == "cut":
         lines.append("转场：从上个镜头硬切。")
     rows = shot.get("timed_lines") or []
@@ -282,6 +319,15 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     audio = spec.get("audio") or {}
     preserve = list((spec.get("global") or {}).get("preserve") or [])
     replace = list((spec.get("global") or {}).get("replace") or [])
+    persona = str((spec.get("global") or {}).get("persona") or "").strip().rstrip("。；;，,")
+    person_sources = int((spec.get("constraints") or {}).get("person_count") or 0)
+    # Replacing the person needs something to replace them with. Without a
+    # persona or a person reference image the only way to keep the cast is to
+    # describe the reference person, so the reference look must not be dropped.
+    if "人物" in replace and not persona and person_sources == 0:
+        replace = [value for value in replace if value != "人物"]
+    people_replaced = "人物" in replace
+    product_replaced = "商品" in replace
     # The spoken audio is rewritten in `regenerate`, so claiming to preserve it
     # in the same sentence would contradict the dialogue block.
     if (spec.get("audio") or {}).get("mode") == "regenerate":
@@ -301,6 +347,13 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
             f"【替换】只替换：{'、'.join(replace)}；"
             f"{'、'.join(preserve) if preserve else '镜头、场景、动作、构图、节奏、转场'} 与参考片一致。"
         )
+    else:
+        # Nothing has a replacement source: state the preservation contract
+        # explicitly instead of leaving the prompt silent about it.
+        head.append(
+            f"【替换】只替换：无（全部保留）；"
+            f"{'、'.join(preserve) if preserve else '镜头、场景、动作、构图、节奏、转场'} 与参考片一致。"
+        )
     materials: list[str] = []
     if anchor:
         materials.append("图片1=参考片首帧，第 1 帧必须与图片一致，后续动作从该帧自然延续")
@@ -311,21 +364,26 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
     if materials:
         head.append("【素材】" + "；".join(materials) + "。")
 
-    persona = str((spec.get("global") or {}).get("persona") or "").strip().rstrip("。；;，,")
     cast = [item.get("description") for shot in shots for item in shot.get("cast") or [] if item.get("description")]
     background_shots = [shot for shot in shots if str(shot.get("background") or "").strip()]
+    all_described = bool(shots) and all(str(shot.get("description") or "").strip() for shot in shots)
     head_background = ""
-    if background_shots:
+    if background_shots and not all_described:
         first = background_shots[0]
         head_background = str(first.get("background") or "").strip().rstrip("。")
         lighting = str(first.get("lighting") or "").strip().rstrip("。")
         head.append("【场景】" + head_background + (("；光线" + lighting) if lighting else "") + "。")
     if persona:
         head.append(f"【人物】{persona}，面向镜头自然交流；人数、站位与参考片一致。")
-    elif "人物" in replace:
+    elif people_replaced:
         head.append("【人物】人物全部替换，人数、站位、动作与参考片一致；不要新增或删除人物。")
-    elif cast:
-        roster = "；".join(dict.fromkeys(cast))[:260].rstrip("。；;，,")
+    elif cast and not all_described:
+        # When every shot has a paragraph the cast is already the first clause of
+        # 画面; repeating it here would say it twice.
+        roster = "；".join(dict.fromkeys(
+            _cast_text(item, drop_props=product_replaced)
+            for shot in shots for item in shot.get("cast") or [] if item.get("description")
+        ))[:260].rstrip("。；;，,")
         head.append(f"【人物】{roster}。")
 
     product_hint = str(req.get("product_hint") or "").strip()
@@ -333,12 +391,19 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
         head.append(f"【商品】{product_hint}，包装与图片一致，手持展示、标签清晰。")
 
     previous_background = head_background
+    roster_printed = bool(persona or people_replaced or (cast and not all_described))
     for index, shot in enumerate(shots):
         background = str(shot.get("background") or "").strip()
         # The first background lives in 【场景】; a shot only repeats one when the
         # reference actually moves somewhere else.
         include = bool(background) and background != previous_background
-        head.extend(_shot_block(shot, index, persona=persona, people_replaced="人物" in replace, include_background=include))
+        head.extend(_shot_block(
+            shot, index, persona=persona, people_replaced=people_replaced,
+            include_background=include, drop_props=product_replaced,
+            # The roster already covers shot 1; repeating it per shot only
+            # pads the prompt.
+            include_cast=(not roster_printed) or index > 0,
+        ))
         if background:
             previous_background = background
 
