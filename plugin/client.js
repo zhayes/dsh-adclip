@@ -210,6 +210,13 @@ window.__ModuleLoader__.load({
 .adp-history-open{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px;text-align:left;background:none;border:0;padding:0;color:inherit;cursor:pointer}
 .adp-history-open b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adp-history-open span{font-size:10.5px;color:var(--dsw-alias-label-secondary)}
+.adp-recent{display:flex;flex-direction:column;gap:6px}
+.adp-recent-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit;cursor:pointer}
+.adp-recent-row:hover{border-color:rgba(201,155,84,.45)}
+.adp-recent-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.adp-recent-main b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-recent-main span{font-size:10.5px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-recent-open{font-size:10.5px;color:#C99B54;white-space:nowrap}
 .adp-composer-input:disabled{opacity:.6;cursor:not-allowed}
 .adp-chatpage{max-width:900px;height:calc(100dvh - 128px);min-height:560px;display:flex;flex-direction:column;margin:0 auto}
 .adp-chat-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin:0 0 8px;flex:0 0 auto}
@@ -472,6 +479,16 @@ window.__ModuleLoader__.load({
 .adp-shot-editor{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--dsw-alias-border-l1);padding-top:10px;margin-top:1px}
 .adp-shot-editor-head{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.05em;text-transform:uppercase;color:#C99B54}
 .adp-shot-chat-row .adp-input{height:32px}
+.adp-analyse{display:flex;flex-direction:column;gap:5px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2);min-width:0}
+.adp-analyse-head{display:flex;align-items:baseline;gap:8px;min-width:0}
+.adp-analyse-head b{font-size:12.5px;font-weight:700;white-space:nowrap}
+.adp-analyse-tag{margin-left:auto;min-width:0;font-size:10.5px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-analyse-action{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.adp-analyse-row{display:flex;gap:8px;min-width:0;font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
+.adp-analyse-label{flex:0 0 26px;font-size:10px;letter-spacing:.04em;line-height:1.75;color:#C99B54;white-space:nowrap}
+.adp-analyse-text{min-width:0;overflow-wrap:anywhere}
+.adp-analyse-meta{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary)}
+.adp-analyse-dialogue{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--dsw-alias-border-l1);padding-top:6px;margin-top:1px;font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .adp-empty-shots{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 14px;color:var(--dsw-alias-label-secondary);font-size:11px}
 .adp-result-error{border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary) 45%,transparent);border-radius:8px;padding:9px 11px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent)}
 .adp-drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:80;display:flex;justify-content:flex-end}
@@ -1460,24 +1477,44 @@ window.__ModuleLoader__.load({
             h('span', { className: 'adp-storyboard-meta' }, (analysis.analysis && analysis.analysis.mode === 'frames' ? '视频帧分析' : '启发式拆解') + ((analysis.analysis && analysis.analysis.model) ? ' · ' + analysis.analysis.model : '') + ((analysis.analysis && analysis.analysis.cached) ? ' · 缓存结果' : '') + ((analysis.analysis && analysis.analysis.degraded) ? ' · 降级' : ''))
           ),
           h('div', { className: 'adp-col', style: { padding: '0 14px 14px', gap: 8 } },
-            ((analysis.remake_plan || {}).shots || []).map((shot) => h('div', { key: shot.id, className: 'adp-shot', style: { padding: '9px 10px' } },
-              h('div', { className: 'adp-shot-top' },
-                h('b', null, (shot.camera && shot.camera.shot_size) || '镜头'),
-                h('span', { className: 'adp-shot-time' }, fmtAt(shot.start_s) + '–' + fmtAt(shot.end_s))
-              ),
-              h('div', { className: 'adp-shot-dialogue' }, shot.action || '—'),
-              h('div', { className: 'adp-shot-action' }, [shot.scene, (shot.product || {}).name, (shot.cast || []).map((x) => x.description).filter(Boolean).join('、')].filter(Boolean).join(' · ') || '—'),
-              (shot.expression || shot.tone || shot.pace_cps)
-                ? h('div', { className: 'adp-small adp-muted' }, [
-                  shot.expression ? '表情 ' + shot.expression : '',
-                  shot.tone ? '语气 ' + shot.tone : '',
-                  shot.pace_cps ? '语速 ' + Number(shot.pace_cps).toFixed(1) + ' 字/秒' : ''
-                ].filter(Boolean).join(' · '))
-                : null,
-              (shot.dialogue_rows || []).length
-                ? h('div', { className: 'adp-small adp-muted' }, shot.dialogue_rows.map((row) => fmtAt(row.start_s) + ' ' + row.text).join(' / '))
-                : ((shot.dialogue || []).length ? h('div', { className: 'adp-small adp-muted' }, shot.dialogue.join(' / ')) : null)
-            )),
+            ((analysis.remake_plan || {}).shots || []).map((shot) => {
+              const cast = (shot.cast || [])
+                .map((x) => ((x.role && x.role !== '人物') ? x.role + '：' : '') + (x.description || ''))
+                .filter(Boolean)
+              const place = [shot.scene, (shot.product || {}).name].filter(Boolean).join(' · ')
+              const sceneText = [shot.background || shot.scene, shot.lighting ? '光线' + shot.lighting : ''].filter(Boolean).join('；')
+              const rows = (shot.dialogue_rows || []).map((row) => ({ at: fmtAt(row.start_s) + '–' + fmtAt(row.end_s), text: row.text }))
+              if (!rows.length) (shot.dialogue || []).forEach((text) => rows.push({ at: '', text }))
+              return h('div', { key: shot.id, className: 'adp-analyse' },
+                h('div', { className: 'adp-analyse-head' },
+                  h('b', null, (shot.camera && shot.camera.shot_size) || '镜头'),
+                  h('span', { className: 'adp-shot-time' }, fmtAt(shot.start_s) + '–' + fmtAt(shot.end_s)),
+                  h('span', { className: 'adp-analyse-tag' }, place || '—')
+                ),
+                h('div', { className: 'adp-analyse-action' }, shot.action || '—'),
+                cast.length
+                  ? h('div', { className: 'adp-analyse-row' },
+                      h('span', { className: 'adp-analyse-label' }, '人物'),
+                      h('span', { className: 'adp-analyse-text' }, cast.join('；')))
+                  : null,
+                sceneText
+                  ? h('div', { className: 'adp-analyse-row' },
+                      h('span', { className: 'adp-analyse-label' }, '场景'),
+                      h('span', { className: 'adp-analyse-text' }, sceneText))
+                  : null,
+                (shot.expression || shot.tone || shot.pace_cps)
+                  ? h('div', { className: 'adp-analyse-meta' }, [
+                    shot.expression ? '表情 ' + shot.expression : '',
+                    shot.tone ? '语气 ' + shot.tone : '',
+                    shot.pace_cps ? '语速 ' + Number(shot.pace_cps).toFixed(1) + ' 字/秒' : ''
+                  ].filter(Boolean).join(' · '))
+                  : null,
+                rows.length
+                  ? h('div', { className: 'adp-analyse-dialogue' }, rows.map((row, i) => h('div', { key: i },
+                      row.at ? h('span', { className: 'adp-line-at' }, row.at + ' ') : null, row.text)))
+                  : null
+              )
+            }),
             (analysis.analysis && analysis.analysis.asr && analysis.analysis.asr.source && analysis.analysis.asr.source !== 'asr')
               ? h('div', { className: 'adp-small adp-muted' }, '台词未解析：' + (analysis.analysis.asr.error || analysis.analysis.asr.source))
               : ((analysis.analysis && analysis.analysis.asr && analysis.analysis.asr.error)
@@ -1508,7 +1545,14 @@ window.__ModuleLoader__.load({
                 ? h('div', { className: 'adp-shot-lines' }, seg.lines.map((row, i) => h('div', { key: i },
                     h('span', { className: 'adp-line-at' }, fmtAt(row.start_s) + '–' + fmtAt(row.end_s) + ' '), row.text)))
                 : h('div', { className: 'adp-shot-lines' }, (seg.dialogue || '—').split(' / ').filter(Boolean).map((line, i) => h('div', { key: i }, line))),
-              seg.action ? h('div', { className: 'adp-shot-action' }, seg.action) : null
+              seg.action ? h('div', { className: 'adp-shot-action' }, seg.action) : null,
+              (seg.background || seg.scene || (seg.cast || []).length)
+                ? h('div', { className: 'adp-small adp-muted' }, [
+                  seg.background || seg.scene,
+                  (seg.cast || []).map((x) => x.description).filter(Boolean).join('；'),
+                  seg.expression ? '表情 ' + seg.expression : ''
+                ].filter(Boolean).join(' · '))
+                : null
             ),
             h('button', { className: 'adp-shot-edit', onClick: () => selectSegment(seg), 'aria-expanded': selected && selected.id === seg.id, title: '编辑这一镜' }, h(Glyph, { name: 'edit' }), h('span', null, selected && selected.id === seg.id ? '收起' : '编辑')),
             selected && selected.id === seg.id ? h('div', { className: 'adp-shot-editor' },
@@ -1613,7 +1657,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function RecreateTab({ models, onStarted, personas, onRefreshPersonas }) {
+    function RecreateTab({ models, runs, onOpen, onStarted, personas, onRefreshPersonas }) {
       const [refAsset, setRefAsset] = useState(null)
       const [products, setProducts] = useState([])
       const [brief, setBrief] = useState('')
@@ -1709,6 +1753,7 @@ window.__ModuleLoader__.load({
           setDetected(detectVideoParams('')); setTouched({})
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
+      const recent = (runs || []).filter((run) => run.scenario === 'viral-remake').slice(0, 5)
       return h('div', { className: 'adp-page' },
         h('div', { className: 'adp-page-head' },
           h('div', null,
@@ -1829,6 +1874,23 @@ window.__ModuleLoader__.load({
             )
           )
         ),
+        recent.length ? h('section', { className: 'adp-panel', style: { marginTop: 10, padding: '12px 14px' } },
+          h('div', { className: 'adp-section-head' },
+            h('span', { className: 'adp-step' }, '03'),
+            h('span', { className: 'adp-section-title' }, '最近复刻'),
+            h('span', { className: 'adp-section-note' }, '点开看上次的结果')
+          ),
+          h('div', { className: 'adp-recent' }, recent.map((run) => h('button', {
+            key: run.id, className: 'adp-recent-row', onClick: () => onOpen && onOpen(run),
+          },
+            h('div', { className: 'adp-recent-main' },
+              h('b', null, run.title || '未命名复刻'),
+              h('span', null, (run.created_at ? new Date(run.created_at).toLocaleString() : '') + ' · ' + (run.step || '') + (run.version > 1 ? ' · v' + run.version : ''))
+            ),
+            h(StatusBadge, { status: run.status }),
+            h('span', { className: 'adp-recent-open' }, '打开 →')
+          )))
+        ) : null,
         preview ? h(PreviewModal, { asset: preview, onClose: () => setPreview(null) }) : null
       )
     }
@@ -1932,6 +1994,14 @@ window.__ModuleLoader__.load({
     // 自由创作对话保存在本机（浏览器侧），历史入口读的就是这份。
     const CONVERSATIONS_KEY = 'adclip.freecreate.conversations.v1'
 
+    // 只用来判断「对话真的变了」。以前每次挂载/打开都会写一次并把 updatedAt
+    // 改成当前时间，历史列表里的时间于是变成“刚才”。
+    const conversationSignature = (id, list) => {
+      const rows = Array.isArray(list) ? list : []
+      const last = rows[rows.length - 1] || {}
+      return String(id || '') + '|' + rows.length + '|' + String(last.text || '').slice(0, 40)
+    }
+
     const loadConversations = () => {
       try {
         const raw = window.localStorage.getItem(CONVERSATIONS_KEY)
@@ -1946,18 +2016,19 @@ window.__ModuleLoader__.load({
       try { window.localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(list.slice(0, 40))) } catch { /* 存储不可用时只丢历史，不影响对话 */ }
     }
 
-    function TextTab({ dsh, textModels, onStarted, onRefreshAssets }) {
+    function TextTab({ dsh, textModels, active, onStarted, onRefreshAssets }) {
       const [conversations, setConversations] = useState(() => loadConversations())
-      // 刷新后回到上次那段对话，而不是一片空白。
-      const [thread, setThread] = useState(() => (conversations[0] && conversations[0].thread) || [])
+      // 进入自由创作就是一个新会话；历史只从右上角入口打开，不自动恢复上一段。
+      const [thread, setThread] = useState([])
       const [pending, setPending] = useState(null)
       const [composer, setComposer] = useState('')
       const [images, setImages] = useState([])
       const [textModel, setTextModel] = useState(null)
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
-      const [convId, setConvId] = useState(() => (conversations[0] && conversations[0].id) || 'c' + Date.now())
+      const [convId, setConvId] = useState(() => 'c' + Date.now())
       const [showHistory, setShowHistory] = useState(false)
+      const lastSavedRef = useRef('')
       const input = useRef(null)
       const scrollRef = useRef(null)
       const composerRef = useRef(null)
@@ -1972,6 +2043,9 @@ window.__ModuleLoader__.load({
       // 对话随时写回本机，刷新或切回来还能恢复。
       useEffect(() => {
         if (!thread.length) return
+        const signature = conversationSignature(convId, thread)
+        if (signature === lastSavedRef.current) return
+        lastSavedRef.current = signature
         const first = thread.find((message) => message.role === 'user')
         const title = String((first && first.text) || '新对话').replace(/\s+/g, ' ').slice(0, 26)
         const now = Date.now()
@@ -1983,6 +2057,23 @@ window.__ModuleLoader__.load({
           return next
         })
       }, [thread, convId])
+
+      // 每次切到自由创作都是一张空白新会话；有待确认的生成卡片时保留
+      // 当前会话，避免切一下标签就丢掉还没确认的提案。
+      const activeRef = useRef(false)
+      useEffect(() => {
+        if (!active) { activeRef.current = false; return }
+        if (activeRef.current) return
+        activeRef.current = true
+        if (pending) return
+        setThread([])
+        setComposer('')
+        setErr('')
+        setImages([])
+        lastProposalRef.current = null
+        lastSavedRef.current = ''
+        setConvId('c' + Date.now())
+      }, [active])
 
       const systemPrompt = [
         '你是 AdClip 自由创作助手。先判断用户这句话的意图，再决定要不要出生成确认卡片。',
@@ -2145,6 +2236,7 @@ window.__ModuleLoader__.load({
         setErr('')
         setShowHistory(false)
         lastProposalRef.current = null
+        lastSavedRef.current = ''
         setConvId('c' + Date.now())
       }
 
@@ -2155,6 +2247,8 @@ window.__ModuleLoader__.load({
         setErr('')
         setShowHistory(false)
         lastProposalRef.current = null
+        // Opening a thread is not a change: do not bump its updatedAt.
+        lastSavedRef.current = conversationSignature(entry.id, entry.thread)
         setConvId(entry.id)
       }
 
@@ -3191,6 +3285,8 @@ window.__ModuleLoader__.load({
       }, [])
 
       useEffect(() => { void refresh() }, [refresh])
+      // 回到复刻页时重新拉一遍任务列表，最近复刻不会停在旧状态。
+      useEffect(() => { if (tab === 'recreate' && !selected) void refresh() }, [tab, selected, refresh])
 
       useEffect(() => {
         if (!IS_MAC) return
@@ -3302,8 +3398,8 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'adp-btn ghost', style: { marginLeft: 8 }, onClick: () => setForceSetup(true) }, '去处理'))
               : null,
             selected ? h(ResultPanel, { run: selected, onChanged: started, onBack: () => setSelected(null), assets }) : null,
-            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, onStarted: started, personas, onRefreshPersonas: refresh })),
-            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, textModels, onStarted: started, onRefreshAssets: refresh })),
+            h('div', { style: { display: (!selected && tab === 'recreate') ? 'block' : 'none' } }, h(RecreateTab, { models: videoModels, runs, onOpen: openRun, onStarted: started, personas, onRefreshPersonas: refresh })),
+            h('div', { style: { display: (!selected && tab === 'text') ? 'block' : 'none' } }, h(TextTab, { dsh, textModels, active: !selected && tab === 'text', onStarted: started, onRefreshAssets: refresh })),
             !selected && tab === 'assets' ? h(AssetsTab, { onRefresh: refresh }) : null,
             !selected && tab === 'personas' ? h(PersonasTab, { personas, onRefresh: refresh }) : null,
             !selected && tab === 'tasks' ? h(TasksTab, { onOpen: openRun }) : null,

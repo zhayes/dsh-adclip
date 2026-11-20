@@ -148,6 +148,9 @@ def build_spec(run: Any, skeleton: dict[str, Any], script: dict[str, Any]) -> di
             "composition": str(shot.get("composition") or ""),
             "continuity": str(shot.get("continuity") or ""),
             "scene": str(shot.get("scene") or ""),
+            "background": str(shot.get("background") or ""),
+            "lighting": str(shot.get("lighting") or ""),
+            "people": str(shot.get("people") or ""),
             "action": str(script_beat.get("shot") or shot.get("action") or ""),
             "reference_action": str(shot.get("action") or ""),
             "expression": str(shot.get("expression") or ""),
@@ -218,7 +221,7 @@ def _stamp(seconds: float) -> str:
     return f"{int(total // 60):02d}:{total % 60:05.2f}"
 
 
-def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool) -> list[str]:
+def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replaced: bool, include_background: bool = True) -> list[str]:
     """One shot as the breakdown described it, in the shape models read best.
 
     A single flowing 画面 paragraph plus a timestamped dialogue list is what a
@@ -230,11 +233,22 @@ def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replac
     end = float(shot.get("end_s") or 0)
     camera = _camera_label(shot)
     lines = [f"【镜头 {index + 1}｜{start:.2f}–{end:.2f}s｜{end - start:.2f}s】" + (f"　{camera}" if camera else "")]
-    visual = [value for value in (
-        str(shot.get("scene") or "").strip(),
+    scene = str(shot.get("scene") or "").strip()
+    background = str(shot.get("background") or "").strip().rstrip("。")
+    lighting = str(shot.get("lighting") or "").strip().rstrip("。")
+    visual: list[str] = []
+    if background and include_background:
+        # The long background replaces the short scene label: writing both says
+        # the same thing twice and pushes the dialogue block out of budget.
+        visual.append(background)
+        if lighting:
+            visual.append("光线" + lighting)
+    elif scene and not background:
+        visual.append(scene)
+    visual.extend(value for value in (
         str(shot.get("reference_action") or shot.get("action") or "").strip(),
         str(shot.get("composition") or "").strip(),
-    ) if value]
+    ) if value)
     if visual:
         lines.append("画面：" + "，".join(visual) + "。")
     acting = [value for value in (
@@ -299,19 +313,34 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
 
     persona = str((spec.get("global") or {}).get("persona") or "").strip().rstrip("。；;，,")
     cast = [item.get("description") for shot in shots for item in shot.get("cast") or [] if item.get("description")]
+    background_shots = [shot for shot in shots if str(shot.get("background") or "").strip()]
+    head_background = ""
+    if background_shots:
+        first = background_shots[0]
+        head_background = str(first.get("background") or "").strip().rstrip("。")
+        lighting = str(first.get("lighting") or "").strip().rstrip("。")
+        head.append("【场景】" + head_background + (("；光线" + lighting) if lighting else "") + "。")
     if persona:
         head.append(f"【人物】{persona}，面向镜头自然交流；人数、站位与参考片一致。")
     elif "人物" in replace:
         head.append("【人物】人物全部替换，人数、站位、动作与参考片一致；不要新增或删除人物。")
     elif cast:
-        head.append("【人物】" + "、".join(dict.fromkeys(cast[:3])) + "。")
+        roster = "；".join(dict.fromkeys(cast))[:260].rstrip("。；;，,")
+        head.append(f"【人物】{roster}。")
 
     product_hint = str(req.get("product_hint") or "").strip()
     if product_hint:
         head.append(f"【商品】{product_hint}，包装与图片一致，手持展示、标签清晰。")
 
+    previous_background = head_background
     for index, shot in enumerate(shots):
-        head.extend(_shot_block(shot, index, persona=persona, people_replaced="人物" in replace))
+        background = str(shot.get("background") or "").strip()
+        # The first background lives in 【场景】; a shot only repeats one when the
+        # reference actually moves somewhere else.
+        include = bool(background) and background != previous_background
+        head.extend(_shot_block(shot, index, persona=persona, people_replaced="人物" in replace, include_background=include))
+        if background:
+            previous_background = background
 
     dialogue = [
         row for shot in shots for row in (shot.get("timed_lines") or [])

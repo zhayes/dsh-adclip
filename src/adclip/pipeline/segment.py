@@ -24,6 +24,12 @@ def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], fi
         start = min(max(0.0, start), max(0.0, target - 0.3))
         end = min(max(start + 0.3, end), target)
         line = " / ".join(str(x.get("text") or "") for x in (script_beats.get(beat.get("id")) or {}).get("lines") or [])
+        visual = beat.get("visual") or {}
+        cast = [
+            {"key": str(item.get("key") or ""), "role": str(item.get("role") or ""), "description": str(item.get("description") or "")}
+            for item in (visual.get("cast") or [])
+            if isinstance(item, dict) and str(item.get("description") or "").strip()
+        ]
         rows.append({
             "id": f"s{len(rows)}",
             "index": len(rows),
@@ -33,8 +39,13 @@ def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], fi
             "source": "one_shot_slice",
             "thumbnail": None,
             "dialogue": line,
-            "action": (script_beats.get(beat.get("id")) or {}).get("shot") or (beat.get("visual") or {}).get("action") or "",
-            "product": "",
+            "action": (script_beats.get(beat.get("id")) or {}).get("shot") or visual.get("action") or "",
+            "scene": str(visual.get("scene") or ""),
+            "background": str(visual.get("background") or ""),
+            "lighting": str(visual.get("lighting") or ""),
+            "expression": str(visual.get("expression") or ""),
+            "cast": cast,
+            "product": str((visual.get("product") or {}).get("name") or "") if isinstance(visual.get("product"), dict) else "",
             "status": "ok",
             "asset_id": None,
             "take": 1,
@@ -44,6 +55,7 @@ def _segments_for(run: Any, skeleton: dict[str, Any], script: dict[str, Any], fi
         rows = [{
             "id": "s0", "index": 0, "start_s": 0.0, "end_s": round(target, 3), "function": "beat",
             "source": "one_shot_slice", "thumbnail": None, "dialogue": "", "action": "",
+            "scene": "", "background": "", "lighting": "", "expression": "", "cast": [],
             "product": "", "status": "ok", "asset_id": None, "take": 1, "note": "demo",
         }]
     return rows

@@ -79,7 +79,7 @@ def _beats(duration: float, cuts: list[float], *, transcript: list[dict[str, Any
                 "confidence": 0.55,
                 "dialogue": [],
                 "dialogue_rows": [],
-                "visual": {"action": "", "shot_size": "中景", "product": {}},
+                "visual": {"action": "", "shot_size": "中景", "product": {}, "cast": [], "background": "", "lighting": ""},
             }
         )
     return rows
@@ -190,6 +190,24 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
         if isinstance(product, dict):
             product_name = str(product.get("name") or "")
         people = str(view.get("people") or "")
+        cast: list[dict[str, Any]] = []
+        for position, item in enumerate(view.get("cast") or []):
+            if not isinstance(item, dict):
+                continue
+            description = str(item.get("description") or "").strip() or vision.cast_description(item)
+            if not description:
+                continue
+            cast.append({
+                "key": str(item.get("key") or chr(65 + position)),
+                "role": str(item.get("role") or "人物"),
+                "description": description,
+                "appearance": str(item.get("appearance") or ""),
+                "wardrobe": str(item.get("wardrobe") or ""),
+                "props": str(item.get("props") or ""),
+                "gaze": str(item.get("gaze") or ""),
+            })
+        if not cast and people:
+            cast = [{"key": "A", "role": "主角", "description": people}]
         shots.append({
             "id": f"s{index}",
             "start_s": beat.get("start_s"),
@@ -202,15 +220,18 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
             "composition": str(view.get("composition") or ""),
             "continuity": str(view.get("continuity") or ""),
             "scene": str(view.get("scene") or ""),
+            "background": str(view.get("background") or ""),
+            "lighting": str(view.get("lighting") or ""),
             "action": str(view.get("action") or ""),
             "expression": str(view.get("expression") or ""),
             "tone": str(view.get("tone") or ""),
             "pace_cps": _pace_cps(beat.get("dialogue_rows") or []),
-            "cast": [{"role": "A", "description": people}] if people else [],
+            "people": people,
+            "cast": cast,
             "product": {
                 "name": product_name,
-                "appearance": "",
-                "position": "",
+                "appearance": str(view.get("product_appearance") or ""),
+                "position": str(view.get("product_position") or ""),
             },
             "dialogue": list(beat.get("dialogue") or []),
             "dialogue_rows": list(beat.get("dialogue_rows") or []),
@@ -236,6 +257,68 @@ def _remake_plan(run: Any, beats: list[dict[str, Any]], facts: dict[str, Any], v
             "warnings": [] if visual else ["视觉标签不可用，拆解为启发式结果"],
         },
     }
+
+
+def _cast_roster(shots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per person across the whole reference, not per shot.
+
+    The UI and the confirmation step read this to describe who is on screen;
+    per-shot rows stay in `remake_plan.shots[].cast` for the prompt renderers.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for shot in shots:
+        for item in shot.get("cast") or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or item.get("role") or "A")
+            entry = rows.get(key)
+            if entry is None:
+                entry = {
+                    "key": key,
+                    "role": str(item.get("role") or "人物"),
+                    "appearance": "",
+                    "wardrobe": "",
+                    "props": "",
+                    "gaze": "",
+                    "description": "",
+                    "shots": [],
+                }
+                rows[key] = entry
+                order.append(key)
+            for field in ("appearance", "wardrobe", "props", "gaze"):
+                if item.get(field) and not entry.get(field):
+                    entry[field] = str(item[field])
+            if item.get("description") and not entry.get("description"):
+                entry["description"] = str(item["description"])
+            shot_id = str(shot.get("id") or "")
+            if shot_id and shot_id not in entry["shots"]:
+                entry["shots"].append(shot_id)
+    return [rows[key] for key in order]
+
+
+def _scene_roster(shots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Distinct backgrounds with the shots they cover."""
+    groups: list[dict[str, Any]] = []
+    for shot in shots:
+        text = str(shot.get("background") or shot.get("scene") or "").strip()
+        if not text:
+            continue
+        entry = next((item for item in groups if item["text"] == text), None)
+        if entry is None:
+            entry = {
+                "text": text,
+                "scene": str(shot.get("scene") or ""),
+                "lighting": str(shot.get("lighting") or ""),
+                "shots": [],
+            }
+            groups.append(entry)
+        elif shot.get("lighting") and not entry.get("lighting"):
+            entry["lighting"] = str(shot["lighting"])
+        shot_id = str(shot.get("id") or "")
+        if shot_id and shot_id not in entry["shots"]:
+            entry["shots"].append(shot_id)
+    return groups
 
 
 def _vision_max_frames() -> int:
@@ -363,6 +446,40 @@ def _plan_analysis_frames(
     return frames
 
 
+def _merge_cast(groups: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Merge per-frame cast rows by key, best frame first.
+
+    The vision pass labels each keyframe separately, so the same person arrives
+    several times with different fields filled in. Keeping the first non-empty
+    value per field gives one complete row per person without letting a later
+    frame overwrite a better description.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for group in groups:
+        for entry in group or []:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("key") or "A").strip().upper() or "A"
+            if key not in merged:
+                merged[key] = dict(entry)
+                merged[key]["key"] = key
+                order.append(key)
+                continue
+            for field, value in entry.items():
+                if field in {"key", "description"}:
+                    continue
+                if value and not merged[key].get(field):
+                    merged[key][field] = value
+    rows: list[dict[str, Any]] = []
+    for key in order:
+        row = merged[key]
+        row["description"] = vision.cast_description(row)
+        if row["description"]:
+            rows.append(row)
+    return rows
+
+
 def _aggregate_visual(
     visual_frames: dict[str, dict[str, Any]],
     frames: list[dict[str, Any]],
@@ -377,7 +494,8 @@ def _aggregate_visual(
     aggregated: dict[str, dict[str, Any]] = {}
     scalar_fields = (
         "shot_size", "camera_angle", "camera_movement", "action", "expression", "tone", "product",
-        "product_visibility", "scene", "composition", "on_screen_text", "continuity",
+        "product_appearance", "product_position", "product_visibility", "scene", "background",
+        "lighting", "composition", "on_screen_text", "continuity",
     )
     for beat in beats:
         items = by_beat.get(str(beat.get("id"))) or []
@@ -388,6 +506,7 @@ def _aggregate_visual(
         for field in scalar_fields:
             merged[field] = next((str(item.get(field)) for item in [best, *items] if item.get(field)), "")
         merged["people"] = next((str(item.get("people")) for item in [best, *items] if item.get("people")), "")
+        merged["cast"] = _merge_cast([list(item.get("cast") or []) for item in [best, *items]])
         merged["confidence"] = max((float(item.get("confidence") or 0.0) for item in items), default=0.0) or None
         merged["unclear"] = sorted({str(value) for item in items for value in (item.get("unclear") or []) if str(value).strip()})
         merged["frame_ids"] = [str(frame.get("id")) for frame in frames if str(frame.get("beat_id")) == str(beat.get("id")) and visual_frames.get(str(frame.get("id")))]
@@ -620,8 +739,13 @@ def analyze(run_id: str) -> dict[str, Any]:
                     "action": item.get("action") or "",
                     "shot_size": item.get("shot_size") or "中景",
                     "product": {"name": item.get("product") or ""},
+                    "product_appearance": item.get("product_appearance") or "",
+                    "product_position": item.get("product_position") or "",
                     "people": item.get("people") or "",
+                    "cast": list(item.get("cast") or []),
                     "scene": item.get("scene") or "",
+                    "background": item.get("background") or "",
+                    "lighting": item.get("lighting") or "",
                     "on_screen_text": item.get("on_screen_text") or "",
                     "camera_angle": item.get("camera_angle") or "",
                     "camera_movement": item.get("camera_movement") or "",
@@ -674,6 +798,8 @@ def analyze(run_id: str) -> dict[str, Any]:
         "degraded": not bool(visual),
         "reason": "" if visual else ("视觉标签不可用，拆解为启发式结果" + (f"：{vision_error}" if vision_error else "")),
         "warnings": warnings,
+        "cast_roster": _cast_roster(plan.get("shots") or []),
+        "scenes": _scene_roster(plan.get("shots") or []),
         "asr": {
             "source": asr_source,
             "model": str(getattr(asr, "LAST_MODEL", "") or "") if asr_source == "asr" else "",

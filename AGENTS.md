@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.36` |
-| Python engine (`adclip.api.VERSION`) | `0.1.28` |
+| DSH plugin (`plugin/package.json`) | `0.5.42` |
+| Python engine (`adclip.api.VERSION`) | `0.1.29` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -141,6 +141,11 @@ dist/                      staged plugin artifacts (ignored)
   reason. Do not reintroduce a reference-length trim.
 - Storyboard edit for H3 creates a **new derived run** with the shot
   instruction in `explicit_overrides`; it never mutates the successful parent.
+- Reference appearance never leaks into a replaced person: `render_generation`
+  drops `cast` when a persona is set or 人物 is replaced, and
+  `build_h3_replace_prompt` identifies the cast by the `people` summary
+  (count/relationship) plus an explicit "不要沿用原片人物的外貌/发型/服装/配饰"
+  line. Background and lighting are preserved in every scope.
 - Non-H3 storyboard edit/replace is transactional: failure restores the prior
   successful run and records `last_edit_error`.
 - On startup, `store.repair_segment_edit_failures()` repairs the historical
@@ -178,8 +183,15 @@ dist/                      staged plugin artifacts (ignored)
   `ImageBlock` content to the first DSH model whose `inputModalities` includes
   `image` (currently `deepseek-flash`); it never picks a text-only model.
 - All paths share `src/adclip/media/vision.py`'s `VISION_PROMPT`: per-frame
-  shot size, camera, people/action, product/visibility, scene, composition,
-  on-screen text, continuity, confidence and unclear fields.
+  shot size, camera, people summary plus structured `cast` (appearance,
+  wardrobe, props, expression, gaze), action, product name/appearance/position,
+  visibility, short `scene` plus detailed `background` and `lighting`,
+  composition, on-screen text, continuity, confidence and unclear fields.
+- `analyze._aggregate_visual()` merges cast rows across a beat's frames by `key`
+  (first non-empty value per field), and the analysis document carries
+  `analysis.cast_roster` and `analysis.scenes` for the UI.
+- `analysis_cache.CACHE_VERSION` is `7`; bump it whenever the vision contract
+  changes or old labels will be replayed forever.
 - Failure never blocks analysis; `analysis.provider/model` records the actual
   source (`minimax`, `ark`, `dsh`) and `analysis.warnings` carries the degraded
   reason.
@@ -310,6 +322,7 @@ Useful checks:
 PYTHONPATH=src .venv/bin/python tests/capabilities.py
 PYTHONPATH=src .venv/bin/python tests/minimax_h3.py
 PYTHONPATH=src .venv/bin/python tests/remake_h3.py
+PYTHONPATH=src .venv/bin/python tests/analysis_detail.py
 PYTHONPATH=src .venv/bin/python tests/segment_edit.py
 PYTHONPATH=src .venv/bin/python tests/fallback.py
 PYTHONPATH=src .venv/bin/python tests/ark_text.py

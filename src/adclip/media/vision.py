@@ -47,12 +47,24 @@ VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考�
     "camera_angle": "平视/俯拍/仰拍/侧拍",
     "camera_movement": "固定/推/拉/摇/移/跟/手持",
     "people": "人数与人物关系，20字内",
-    "action": "画面中可见动作，20字内",
-    "expression": "人物表情与情绪，20字内，如夸张瞪眼/得意微笑/一脸怀疑/捂嘴笑",
-    "tone": "说话语气，15字内，如夸张叫卖/急切追问/轻松调侃/温柔推荐；没人在说话就留空",
+    "cast": [{
+      "key": "A",
+      "role": "主角/同伴/路人",
+      "appearance": "年龄段、性别、族裔、发型、面部特征（眼镜/胡须等），60字内",
+      "wardrobe": "上装、下装、配饰，40字内，不写“身穿”",
+      "props": "手中或身上的道具与持握方式，30字内",
+      "expression": "当前可见表情，20字内",
+      "gaze": "看镜头/看商品/看对方/低头，10字内"
+    }],
+    "action": "画面中可见动作，40字内",
+    "tone": "说话语气，15字内，如夸张叫卖/急切追问/轻松调侃；没人在说话就留空",
     "product": "商品及可见包装，20字内；看不清写未识别商品",
+    "product_appearance": "包装形态、颜色、材质，40字内；看不清留空",
+    "product_position": "商品在画面中的位置或手持方式，20字内",
     "product_visibility": "主体/背景/部分遮挡/不可见",
     "scene": "场景，15字内",
+    "background": "地点、环境元素、背景道具、天气与时间，80字内",
+    "lighting": "光源方向、强弱、色温、阴影，40字内",
     "composition": "主体位置/前中后景/留白",
     "on_screen_text": "画面文字或价格，原文照抄，没有就空",
     "continuity": "与上一帧相比：同场景/换场景/同人物/换人物/不确定",
@@ -60,14 +72,23 @@ VISION_PROMPT = """你是广告片分镜视觉标签器。输入是同一参考�
     "unclear": ["看不清的字段"]
   }]
 }
+
+示例（只示范写法，不要把示例内容写进输出）：
+{"id":"b0","people":"1名男子","cast":[{"key":"A","role":"主角","appearance":"40岁左右亚洲男性，戴黑框眼镜，短寸头","wardrobe":"深蓝色西装外套，内搭白衬衫","props":"右手握黄色美工刀","expression":"期待微笑","gaze":"看镜头"}],"action":"右手持刀站在车厢红布前，准备剪彩","product":"棕色纸箱货物","product_appearance":"牛皮纸色纸箱，成摞码放","product_position":"画面中央车斗上","product_visibility":"主体","scene":"货车旁","background":"明亮蓝天白云下的工业厂房前水泥空地，右侧停着白色厢式货车","lighting":"日光充足，右侧偏亮，阴影短","composition":"人物居左，货车居右，画面上方留白","confidence":0.9}
+
 规则：
 - 商品名只有包装清晰可读时才填；不要编造品牌、价格、功效。
 - on_screen_text 不翻译、不补价格。
-- 人物只写画面中可见的人数/关系，不推测身份。
-- expression 只写看得见的表情，不写性格或心理活动；看不清留空。
+- cast 每个画面中的人一条；同一人物在不同帧必须用同一个 key（A/B/C），不要按帧重新编号。
+- 人物只写看得见的外形特征；看不清的特征留空，不要猜身份、职业、姓名。
+- wardrobe 不写“身穿”，只写衣物本身；看不清就留空。
+- props 只写手里拿着或身上佩戴的道具，写清哪只手、怎么拿。
+- expression/gaze 只写看得见的内容，不写性格或心理活动。
+- background 写环境本身（地点、环境元素、背景道具、天气），不要重复人物动作。
+- lighting 没有明确线索就留空，不要用“自然光”这类套话。
 - tone 只在人物确实在说话时判断，参考嘴型和张嘴/笑/皱眉等可见线索；多帧连起来判断情绪走向。
 - 多帧一起看可以用前后帧判断连续性，但不能把不同帧的内容混到同一帧。
-- 标签尽量短，方便后续生成使用。"""
+- 同一人物、同一场景在不同帧用同样的词描述，方便跨帧合并。"""
 
 
 def available() -> bool:
@@ -123,6 +144,55 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def cast_description(item: dict[str, Any]) -> str:
+    """One readable line for a cast entry: look, outfit, props.
+
+    Renderers and the UI both want a sentence rather than four adjacent keys,
+    and the H3 prompt deliberately uses the shorter ``people`` summary instead
+    so a replaced person cannot inherit the reference person's appearance.
+    """
+    parts: list[str] = []
+    look = str(item.get("appearance") or "").strip()
+    if look:
+        parts.append(look)
+    outfit = str(item.get("wardrobe") or "").strip().lstrip("穿")
+    if outfit:
+        parts.append("身穿" + outfit)
+    props = str(item.get("props") or "").strip()
+    if props:
+        parts.append(props)
+    return "，".join(parts)[:160]
+
+
+def _normalize_cast(value: Any) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if not isinstance(value, list):
+        return items
+    seen: set[str] = set()
+    for index, raw in enumerate(value[:4]):
+        if isinstance(raw, str):
+            raw = {"appearance": raw}
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key") or "").strip().upper()[:2] or chr(65 + index)
+        if key in seen:
+            key = chr(65 + len(items))
+        seen.add(key)
+        item = {
+            "key": key,
+            "role": str(raw.get("role") or "")[:12],
+            "appearance": str(raw.get("appearance") or "")[:90],
+            "wardrobe": str(raw.get("wardrobe") or "")[:60],
+            "props": str(raw.get("props") or "")[:50],
+            "expression": str(raw.get("expression") or "")[:40],
+            "gaze": str(raw.get("gaze") or "")[:20],
+        }
+        item["description"] = cast_description(item)
+        if item["description"]:
+            items.append(item)
+    return items
+
+
 def _normalize_rows(value: dict[str, Any] | None, labels: list[str]) -> dict[str, dict[str, Any]]:
     rows = (value or {}).get("frames")
     if not isinstance(rows, list):
@@ -134,14 +204,26 @@ def _normalize_rows(value: dict[str, Any] | None, labels: list[str]) -> dict[str
         frame_id = str(row.get("id") or "")
         if frame_id not in labels:
             continue
+        people = str(row.get("people") or row.get("people_relation") or "")[:160]
+        cast = _normalize_cast(row.get("cast"))
+        if not cast and people:
+            # Older prompt revisions only returned a one-line people summary;
+            # keep it usable as the single cast row instead of dropping it.
+            cast = [{"key": "A", "role": "主角", "appearance": "", "wardrobe": "", "props": "",
+                     "expression": "", "gaze": "", "description": people}]
         out[frame_id] = {
             "shot_size": str(row.get("shot_size") or "")[:30],
-            "action": str(row.get("action") or "")[:200],
+            "action": str(row.get("action") or "")[:240],
             "expression": str(row.get("expression") or "")[:60],
             "tone": str(row.get("tone") or "")[:60],
-            "people": str(row.get("people") or row.get("people_relation") or "")[:100],
+            "people": people,
+            "cast": cast,
             "product": str(row.get("product") or "")[:120],
-            "scene": str(row.get("scene") or "")[:80],
+            "product_appearance": str(row.get("product_appearance") or "")[:80],
+            "product_position": str(row.get("product_position") or "")[:60],
+            "scene": str(row.get("scene") or "")[:120],
+            "background": str(row.get("background") or "")[:160],
+            "lighting": str(row.get("lighting") or "")[:100],
             "on_screen_text": str(row.get("on_screen_text") or "")[:120],
             "camera_angle": str(row.get("camera_angle") or "")[:30],
             "camera_movement": str(row.get("camera_movement") or "")[:30],
@@ -170,7 +252,7 @@ def _analyze_minimax(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         response = client.post(
             f"{BASE}/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": MODEL, "messages": [{"role": "user", "content": content}], "max_tokens": 4000, "temperature": 0.15},
+            json={"model": MODEL, "messages": [{"role": "user", "content": content}], "max_tokens": 6000, "temperature": 0.15},
         )
     if response.status_code >= 400:
         LAST_ERROR = f"MiniMax HTTP {response.status_code}: {response.text[:240]}"
@@ -207,7 +289,7 @@ def _analyze_ark(frames: list[dict[str, Any]], models: list[dict[str, Any]] | No
                 "",
                 [{"role": "user", "content": content}],
                 model=str(row["id"]),
-                max_tokens=4000,
+                max_tokens=6000,
                 temperature=0.15,
                 thinking=False,
                 timeout=120.0,
@@ -290,7 +372,7 @@ def _analyze_dsh(frames: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         with httpx.Client(timeout=httpx.Timeout(float(os.environ.get("ADSTUDIO_DSH_VISION_TIMEOUT", "45")), connect=10.0)) as client:
             response = client.post(
                 DSH_VISION_URL,
-                json={"frames": payload_frames, "prompt": VISION_PROMPT + "\n\n" + _manifest(frames), "maxTokens": 4000},
+                json={"frames": payload_frames, "prompt": VISION_PROMPT + "\n\n" + _manifest(frames), "maxTokens": 6000},
             )
         if response.status_code >= 400:
             LAST_ERROR = f"DSH vision HTTP {response.status_code}: {response.text[:240]}"

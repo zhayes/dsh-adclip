@@ -40,6 +40,11 @@ def analysis_summary(skeleton: dict[str, Any]) -> dict[str, Any]:
         "shots": len(shots),
         "product": next((value for value in products if value), ""),
         "cast": list(dict.fromkeys(casts))[:4],
+        # The people summary (count/relationship) is what may identify the cast in
+        # an H3 prompt. Appearance belongs to the reference person only, so a
+        # replaced person must not inherit it through the prompt text.
+        "people": next((str(shot.get("people") or "").strip() for shot in shots if str(shot.get("people") or "").strip()), ""),
+        "background": next((str(shot.get("background") or "").strip() for shot in shots if str(shot.get("background") or "").strip()), ""),
         "preserve": list((plan.get("global") or {}).get("preserve") or [])[:10],
     }
 
@@ -89,7 +94,7 @@ def build_h3_replace_prompt(
     audio_tail = "和原声台词/音效。" if audio_mode != "regenerate" or not spoken else "。"
 
     lines: list[str] = [
-        "参考视频1的镜头、景别、运镜、场景、动作、构图、光线、节奏、转场" + audio_tail,
+        "参考视频1的镜头、景别、运镜、场景、背景、光线、动作、构图、节奏、转场" + audio_tail,
         "只做以下替换，未提及的部分保持原样：",
     ]
     product_label = "图片1" if product_count else "商品参考图"
@@ -102,14 +107,15 @@ def build_h3_replace_prompt(
     if scope in {"both", "person"}:
         start = product_count + 1 if product_count else 1
         person_label = f"图片{start}" if person_count else "人物参考图"
-        cast = "、".join(summary.get("cast") or [])
-        who = f"原片中的主角（{cast}）" if cast else "原片中的主角"
+        people = str(summary.get("people") or "").strip()
+        who = f"原片中的主角（{people}）" if people else "原片中的主角"
         if person_scope == "all":
             who = "原片中的所有人物"
         lines.append(
             f"{2 if scope == 'both' else 1}. 将{who}替换为{person_label}中的人物；"
-            "保留原人物的位置、动作、表情、口型、服装风格、人物关系和镜头关系。"
+            "保留原人物的位置、动作、表情、口型、人物关系和镜头关系。"
         )
+        lines.append("新人物以参考图为准；不要沿用原片人物的外貌、发型、服装、配饰、眼镜或胡须。")
     if audio_mode == "regenerate" and spoken:
         lines.extend([
             "参考视频1没有声音；只保留画面、镜头、场景、动作、构图和节奏。",

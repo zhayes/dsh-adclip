@@ -72,6 +72,11 @@ class StoryboardSegment(BaseModel):
     thumbnail: Optional[str] = None
     dialogue: str = ""
     action: str = ""
+    scene: str = ""
+    background: str = ""
+    lighting: str = ""
+    expression: str = ""
+    cast: list[dict[str, Any]] = Field(default_factory=list)
     product: str = ""
     status: Literal["ok", "warn", "fail"] = "ok"
     asset_id: Optional[str] = None
