@@ -307,7 +307,14 @@ def _shot_block(shot: dict[str, Any], index: int, *, persona: str, people_replac
     return lines
 
 
-def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool = False) -> str:
+def render_generation(
+    spec: dict[str, Any],
+    *,
+    limit: int = 3500,
+    anchor: bool = False,
+    anchor_products: bool = False,
+    anchor_person: bool = False,
+) -> str:
     """Full description for a model that cannot see the reference video.
 
     The layout mirrors the breakdown: every shot keeps its own lens, scene,
@@ -355,9 +362,20 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
             f"{'、'.join(preserve) if preserve else '镜头、场景、动作、构图、节奏、转场'} 与参考片一致。"
         )
     materials: list[str] = []
+    product_count = int((spec.get("constraints") or {}).get("product_count") or 0)
     if anchor:
         materials.append("图片1=参考片首帧，第 1 帧必须与图片一致，后续动作从该帧自然延续")
-    elif int((spec.get("constraints") or {}).get("product_count") or 0):
+        # The anchor occupies 图片1, so product references shift by one. Only
+        # claim them when the adapter actually sends them.
+        if anchor_products and product_count:
+            slots = "图片2" if product_count == 1 else f"图片2–{product_count + 1}"
+            materials.append(f"{slots}=替换后的商品，包装、颜色、文字以图片为准")
+        # The character carried over from the previous shot sits after the product
+        # references; its index must match the order `generate_sequence` sends.
+        if anchor_person:
+            index = product_count + 2 if (anchor_products and product_count) else 2
+            materials.append(f"图片{index}=本片固定的主持人，脸型与发型以该图为准，全片同一个人")
+    elif product_count:
         materials.append("图片1=替换后的商品，包装、颜色、文字以图片为准")
     if int((spec.get("constraints") or {}).get("person_count") or 0):
         materials.append("人物参考图=替换后的人物")
@@ -428,8 +446,12 @@ def render_generation(spec: dict[str, Any], *, limit: int = 3500, anchor: bool =
             "价格和数字读清楚，句尾收得住；不要平铺直叙，不要播报腔。"
         )
         head.append(
-            "【节奏】整条一气说完，句间只做自然换气，不要多出参考片没有的空白；"
-            "镜头切点不要停顿，上一句说完直接接下一句。"
+            "【节奏】" + (
+                "这一镜一气说完，句间只做自然换气，不要多出参考片没有的空白。"
+                if len(shots) <= 1 else
+                "整条一气说完，句间只做自然换气，不要多出参考片没有的空白；"
+                "镜头切点不要停顿，上一句说完直接接下一句。"
+            )
         )
         prices = [str(value) for value in req.get("prices") or []]
         if prices:

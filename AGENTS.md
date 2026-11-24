@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.49` |
-| Python engine (`adclip.api.VERSION`) | `0.1.32` |
+| DSH plugin (`plugin/package.json`) | `0.5.50` |
+| Python engine (`adclip.api.VERSION`) | `0.1.33` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -118,6 +118,45 @@ dist/                      staged plugin artifacts (ignored)
   1. MiniMax H3 (`full`, reference replacement),
   2. Seedance reference/generation models,
   3. `analysis_only`.
+- The ladder itself is `catalog.REMAKE_RUNGS`: `full` → `reference` → `keyframe`
+  → `generation` → `analysis_only`. Seedance rows on Ark are `keyframe_ready`
+  **and** `keyframe_multi_image`: Ark takes the source first frame as
+  `first_frame`/`reference_image` next to the product reference, so a product
+  swap keeps its own image with **no video hosting**. Kling-class adapters read
+  `images[0]` only, so they stay single-image and a product swap skips the rung
+  there. `keyframe` is skipped for `replace_scope=both` (the anchor frame shows
+  the source cast) and for `person` on models whose
+  `real_person_reference=restricted`. When the anchor is sent, `图片1` is the
+  first frame and the product shifts to `图片2…`, so
+  `render_generation(anchor_products=True)` must stay in sync with the image
+  order in `generate()`.
+- **Ark 一律换人。** Seedance 的输入审核逐帧看画面，不看来源也不看任何声明：
+  真人实拍和 AI 生成的高拟真人脸同样被拒，请求体里没有可用的授权字段。
+  所以 `generate()` 对 `real_person_reference=restricted` 的模型一律先抹脸再送，
+  人物必定由模型重新生成，"复刻原片那个主播"在 API 侧不可能。
+  文档里的"信任模型产物"白名单只认同账号 30 天内未二次加工的原始产物，
+  自己 ffmpeg 裁的帧会丢掉信任（实测：裁帧被拒，`last_frame_url` 被接受）。
+- **抹脸靠升级而不是检测。** OpenCV 5 不再自带 Haar 级联，`FaceDetectorYN` 还要
+  额外模型，为猜一个框去引模型不值得：Ark 的 400 不计费，所以
+  `media/face_mask.py` 从"不遮"开始逐级放大（`STEPS`），首个被接受的级别胜出，
+  `result.mask_step` 记录用了哪级（越大表示模型补得越多）。商品特写类在第 0 级
+  就通过，完全不受影响。
+- **跨镜头人物一致靠尾帧接力。** Ark 只信任它自己产出的含人脸画面，所以每个
+  镜头请求带 `return_last_frame`，`ark._capture_last_frame()` 立刻把尾帧落盘
+  （预签名 URL 约 24 小时过期），下一镜头用它当 `reference_image`。由于镜头 2
+  依赖镜头 1 的尾帧，逐镜头编排必须顺序执行，不能并发。
+- **多镜头走 `generate_sequence()`。** `generate()` 在 `mode=keyframe` 且
+  `remake_plan.shots` 多于一条时改走逐镜头编排：每个镜头抽首帧 → 抹脸 →
+  带上商品图与本片主持人图 → 单独生成 → `stitch.plan/execute` 拼成
+  `provider_raw.mp4`，所以 post/qa 不需要分支。单个镜头仍走原单条路径。
+  每镜头时长取模型档位里 `>= 镜头时长` 的那一档（镜头从不裁剪），总时长因此
+  可能与参考片有偏差，记为 warning。图片顺序固定为
+  `[首帧, 商品…, 主持人]`，`render_generation(anchor_person=True)` 的编号必须
+  与之一致。
+- **实测硬约束**（报错文案已映射成中文，见 `ark._ERROR_HINTS`）：参考片总像素
+  `407696–8295044`、时长 `2–15s`（2.0 系列）、`24–60fps`、`≤200MB`、`mp4/mov`；
+  `video_url` 只接受公网 URL 或 `asset://`，Files API 的 `file-…` id 和
+  `file://` 都会被拒绝（所以视频托管仍只能走 TOS 预签名）。
 - H3 is the only `full` remake model. H3 requires a 4–15s reference and uploads
   through the Files API (`mm_role` references; `mm_file://...` content).
 - H3 runs generate `gag.json` and `script.json` even though H3 is one-shot.
@@ -351,6 +390,7 @@ PYTHONPATH=src .venv/bin/python tests/minimax_h3.py
 PYTHONPATH=src .venv/bin/python tests/remake_h3.py
 PYTHONPATH=src .venv/bin/python tests/analysis_detail.py
 PYTHONPATH=src .venv/bin/python tests/segment_edit.py
+PYTHONPATH=src .venv/bin/python tests/remake_sequence.py
 PYTHONPATH=src .venv/bin/python tests/fallback.py
 PYTHONPATH=src .venv/bin/python tests/ark_text.py
 PYTHONPATH=src .venv/bin/python tests/script_rules.py

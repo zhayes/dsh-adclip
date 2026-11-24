@@ -16,7 +16,7 @@ os.environ.pop("ARK_API_KEY", None)
 from adclip import catalog, remake_policy, store  # noqa: E402
 from adclip.media import ffmpeg  # noqa: E402
 from adclip.models import Run, RunStep  # noqa: E402
-from adclip.pipeline import generate  # noqa: E402
+from adclip.pipeline import generate, remake_spec  # noqa: E402
 
 
 def _run_like(duration: float = 11.0, size: int | None = None, scope: str = "both") -> Run:
@@ -42,7 +42,10 @@ def check_chain() -> None:
         # A direct-video rung is only usable when the adapter can send the video.
         assert by_rung["reference"]["available"] is False, by_rung["reference"]
         assert "暂不启用" in by_rung["reference"]["reason"], by_rung["reference"]
-        assert by_rung["keyframe"]["available"] is False, by_rung["keyframe"]
+        # Seedance takes `first_frame` next to its reference images, so the rung is
+        # reachable with an Ark key alone (it used to need a Kling key).
+        assert by_rung["keyframe"]["available"] is True, by_rung["keyframe"]
+        assert by_rung["keyframe"]["model"].startswith("ark.seedance"), by_rung["keyframe"]
         assert by_rung["generation"]["available"] is True, by_rung["generation"]
         assert by_rung["generation"]["model"].startswith("ark."), by_rung["generation"]
     finally:
@@ -142,6 +145,103 @@ def check_keyframe_rung() -> None:
         os.environ.pop("KLING_API_KEY", None)
 
 
+def check_ark_keyframe_product() -> None:
+    """Ark anchors a first frame, so a product swap stays on the keyframe rung."""
+    os.environ["ARK_API_KEY"] = "test-key"
+    try:
+        pick = remake_policy.select(_run_like(scope="product"), source_duration=8.0)
+        assert pick["mode"] == "keyframe", pick
+        assert pick["model"].startswith("ark.seedance"), pick
+
+        # Replacing people must never ride on the source first frame.
+        person = remake_policy.select(_run_like(scope="person"), source_duration=8.0)
+        assert person["mode"] != "keyframe", person
+        assert any("参考帧" in (row.get("reason") or "") for row in person["history"]), person["history"]
+
+        # The prompt numbering has to track the images the adapter really sends.
+        with_products = remake_spec.render_generation(
+            {"constraints": {"product_count": 1}}, anchor=True, anchor_products=True,
+        )
+        assert "图片2=替换后的商品" in with_products, with_products
+        anchor_only = remake_spec.render_generation(
+            {"constraints": {"product_count": 1}}, anchor=True,
+        )
+        assert "图片2" not in anchor_only, anchor_only
+    finally:
+        os.environ.pop("ARK_API_KEY", None)
+
+
+def check_privacy_escalation() -> None:
+    """Ark's real-person refusal is free, so the mask widens before giving up."""
+    import tempfile
+    from pathlib import Path
+
+    from adclip.media import face_mask
+    from adclip.providers.base import ProviderError
+
+    work = Path(tempfile.mkdtemp(prefix="adclip-mask-"))
+    anchor = work / "anchor.jpg"
+    ffmpeg.run([
+        ffmpeg.FFMPEG, "-v", "error", "-y", "-f", "lavfi",
+        "-i", "testsrc=size=320x240:rate=1:duration=1", "-frames:v", "1", str(anchor),
+    ])
+
+    class RejectsTwice:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, prompt, *, images=None, duration=4, resolution="720p", aspect="9:16",
+                     model="", output, return_last_frame=False, meta=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise ProviderError(
+                    "Ark 创建任务失败 HTTP 400: InputImageSensitiveContentDetected.PrivacyInformation"
+                )
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"clip")
+            if meta is not None:
+                meta["last_frame_url"] = "https://example.com/last.jpg"
+            return output
+
+    class Accepts:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, prompt, *, images=None, duration=4, resolution="720p", aspect="9:16",
+                     model="", output, **kwargs):
+            self.calls += 1
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"clip")
+            return output
+
+    def images_for(model_id: str, step: int) -> list:
+        frame = anchor if step == 0 else face_mask.mask_step(anchor, work / f"m{step}.jpg", step)
+        return [frame, work / "product.jpg"]
+
+    attempts: list[dict] = []
+    provider = RejectsTwice()
+    result = generate._call_provider(
+        provider, "ark.seedance-2.0-fast",
+        prompt="p", duration=4, advanced={}, result_path=work / "out.mp4",
+        anchor_present=True, images_for=images_for, attempts=attempts,
+    )
+    assert provider.calls == 3, provider.calls
+    assert result["mask_step"] == 2, result
+    assert result["last_frame_url"] == "https://example.com/last.jpg", result
+    assert [row.get("mask_step") for row in attempts] == [0, 1], attempts
+    assert (work / "m1.jpg").is_file() and (work / "m2.jpg").is_file(), "masked frames must be rendered"
+
+    # A model that accepts real faces is never masked and never escalates.
+    plain = Accepts()
+    single = generate._call_provider(
+        plain, "kling.v3",
+        prompt="p", duration=4, advanced={}, result_path=work / "out2.mp4",
+        anchor_present=True, images_for=images_for, attempts=[],
+    )
+    assert plain.calls == 1, plain.calls
+    assert "last_frame_url" not in single, single
+
+
 def check_h3_failure_degrades_in_run() -> None:
     os.environ["MINIMAX_API_KEY"] = "test-key"
     os.environ["ARK_API_KEY"] = "test-key"
@@ -150,7 +250,7 @@ def check_h3_failure_degrades_in_run() -> None:
     original_adapter = generate._adapter
 
     class Ok:
-        def generate(self, prompt, *, images=None, duration=4, resolution="720p", aspect="9:16", model="", output):
+        def generate(self, prompt, *, images=None, duration=4, resolution="720p", aspect="9:16", model="", output, return_last_frame=False, meta=None):
             output.parent.mkdir(parents=True, exist_ok=True)
             ffmpeg.make_synthetic_clip(None, output, duration=2, width=320, height=240)
             return output
@@ -201,6 +301,8 @@ def main() -> None:
     check_degrade()
     check_candidates_skip_h3()
     check_keyframe_rung()
+    check_ark_keyframe_product()
+    check_privacy_escalation()
     check_h3_failure_degrades_in_run()
     print("adclip remake policy: ok")
 

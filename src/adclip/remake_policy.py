@@ -10,7 +10,9 @@ Rungs, strongest first:
 
 1. `full`      — the reference video itself is sent (H3).
 2. `reference` — a direct-video model is available and its adapter is wired.
-3. `keyframe`  — first-frame anchoring (declared, adapter not wired yet).
+3. `keyframe`  — first-frame anchoring. Ark-class models anchor the source's
+   first frame and still receive the product references; Kling-class adapters
+   take the anchor alone, so asking them to swap a product skips this rung.
 4. `generation`— the model only sees our analysis prompt.
 5. `analysis_only` — no video model; the run returns the breakdown only.
 """
@@ -154,8 +156,21 @@ def select(
                 continue
         if rung == "keyframe":
             scope = str(advanced.get("replace_scope") or "both")
-            if scope in {"both", "product"}:
-                why = "换商品需要商品参考图，首帧锚定档只能传一张首帧"
+            remake = (catalog.get(model_id) or {}).get("remake") or {}
+            # The anchor frame still shows the source cast, so anchoring while
+            # replacing people hands the model the look the run must drop.
+            if scope == "both":
+                why = "同时换人换商品：首帧锚定会把原片人物带进画面"
+                history.append({"rung": rung, "model": model_id, "status": "skipped", "reason": why})
+                notes.append(f"首帧锚定: {why}")
+                continue
+            if scope == "person" and str(remake.get("real_person_reference") or "") == "restricted":
+                why = "该模型不收含真人的参考帧，换人档不能用首帧锚定"
+                history.append({"rung": rung, "model": model_id, "status": "skipped", "reason": why})
+                notes.append(f"首帧锚定: {why}")
+                continue
+            if scope == "product" and not remake.get("keyframe_multi_image"):
+                why = "换商品需要额外一张商品参考图，该模型首帧档只能传一张图"
                 history.append({"rung": rung, "model": model_id, "status": "skipped", "reason": why})
                 notes.append(f"首帧锚定: {why}")
                 continue

@@ -119,6 +119,11 @@ SPECS: dict[str, dict[str, Any]] = {
             "priority": 90,
             "cost_weight": 0.6,
             "reference_video_ready": False,
+            # Ark takes `first_frame` natively and up to nine `reference_image`
+            # entries, so the source first frame can anchor the shot while the
+            # product reference travels next to it. No video hosting required.
+            "keyframe_ready": True,
+            "keyframe_multi_image": True,
         },
         "quality": {"structure": 0.85, "identity": 0.8, "product": 0.8},
         "default_params": {"resolution": "720p", "generate_audio": True, "watermark": False},
@@ -139,6 +144,8 @@ SPECS: dict[str, dict[str, Any]] = {
             "priority": 80,
             "cost_weight": 0.7,
             "reference_video_ready": False,
+            "keyframe_ready": True,
+            "keyframe_multi_image": True,
         },
         "quality": {"structure": 0.85, "identity": 0.8, "product": 0.8},
         "default_params": {"resolution": "1080p", "generate_audio": True, "watermark": False},
@@ -158,6 +165,8 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "restricted",
             "priority": 60,
             "cost_weight": 0.3,
+            "keyframe_ready": True,
+            "keyframe_multi_image": True,
         },
         "quality": {"structure": 0.75, "identity": 0.7, "product": 0.7},
         "default_params": {"resolution": "720p", "generate_audio": True, "watermark": False},
@@ -177,6 +186,8 @@ SPECS: dict[str, dict[str, Any]] = {
             "real_person_reference": "restricted",
             "priority": 55,
             "cost_weight": 0.25,
+            "keyframe_ready": True,
+            "keyframe_multi_image": True,
         },
         "quality": {"structure": 0.72, "identity": 0.68, "product": 0.68},
         "default_params": {"resolution": "720p", "generate_audio": True, "watermark": False},

@@ -43,9 +43,39 @@ def check_ark_images() -> None:
     assert images[0]["image_url"]["url"].startswith("data:image/png;base64,"), images[0]
 
 
+def check_ark_reference_sources() -> None:
+    """URLs and asset ids pass through untouched.
+
+    Ark takes a public URL or an `asset://` id and nothing else, and a model's
+    own last frame must be forwarded verbatim: re-encoding it locally drops the
+    trust that lets it carry a character from shot to shot.
+    """
+    body = ark._payload(
+        "doubao-seedance-2-0-fast",
+        "prompt",
+        images=["https://example.com/last-frame.jpg", "asset://asset-2026"],
+        return_last_frame=True,
+    )
+    urls = [item["image_url"]["url"] for item in body["content"] if item["type"] == "image_url"]
+    assert urls == ["https://example.com/last-frame.jpg", "asset://asset-2026"], urls
+    assert body["return_last_frame"] is True, body
+    assert ark._payload("m", "p")["return_last_frame"] is False, body
+
+
+def check_ark_errors() -> None:
+    """Provider errors are translated into the action the operator must take."""
+    privacy = ark._readable('{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation"}}')
+    assert "含真人" in privacy, privacy
+    assert "407696" in ark._readable("video pixel count must be greater than or equal to 407696"), "pixel"
+    assert "asset://" in ark._readable("Your account has not activated the Asset Service"), "asset"
+    assert ark._readable("something unexpected") == "something unexpected", "passthrough"
+
+
 def main() -> None:
     check_ark_payload()
     check_ark_images()
+    check_ark_reference_sources()
+    check_ark_errors()
     print("adclip provider payloads: ok")
 
 

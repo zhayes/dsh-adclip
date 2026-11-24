@@ -439,7 +439,10 @@ def _remake_candidates(rung: str, rows: list[dict[str, Any]]) -> list[dict[str, 
     cannot receive the reference video may only be used as a generation model,
     so a `reference` tier row without the flag falls through to generation.
     The keyframe rung needs a first-frame capable adapter *and* native audio,
-    because a silent first-frame model cannot carry a talking ad.
+    because a silent first-frame model cannot carry a talking ad. Whether the
+    anchor can travel next to the product references is a separate capability
+    (`remake.keyframe_multi_image`), so a single-image adapter never gets a
+    product swap routed to it.
     """
     out = []
     for row in rows:

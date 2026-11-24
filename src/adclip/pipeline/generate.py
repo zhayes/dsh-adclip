@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import catalog, params, remake_policy, store
-from ..media import ffmpeg
+from ..media import face_mask, ffmpeg, stitch
 from . import persona as persona_mod
 from . import remake_spec
 from ..providers.ark import ArkProvider
@@ -327,6 +327,27 @@ def _video_candidates(run: Any) -> list[dict[str, Any]]:
     return ordered
 
 
+def _keyframe_multi_image(model_id: str) -> bool:
+    """Whether the model takes the anchor frame *plus* the product references.
+
+    Kling-class adapters send `images[0]` only, so the anchor always wins there.
+    Ark-class adapters accept a first frame next to up to nine reference images.
+    """
+    row = catalog.get(model_id) or {}
+    return bool((row.get("remake") or {}).get("keyframe_multi_image"))
+
+
+def _real_person_restricted(model_id: str) -> bool:
+    """Whether the model refuses any reference frame that may show a real person.
+
+    This is why a remake through Ark always replaces the broadcast person: the
+    anchor frame is masked, and the last frame of the previous shot — the only
+    face Ark will trust — becomes the character reference.
+    """
+    row = catalog.get(model_id) or {}
+    return str((row.get("remake") or {}).get("real_person_reference") or "") == "restricted"
+
+
 def _generation_prompt(run: Any, script: dict[str, Any], skeleton: dict[str, Any], selection: dict[str, Any]) -> str:
     """Prompt for a model that does not receive the reference video.
 
@@ -341,10 +362,215 @@ def _generation_prompt(run: Any, script: dict[str, Any], skeleton: dict[str, Any
     spec = remake_spec.build_spec(run, skeleton, script)
     mode = str(selection.get("mode") or "generation")
     if mode == "keyframe":
-        return remake_spec.render_generation(spec, anchor=True)
+        return remake_spec.render_generation(
+            spec,
+            anchor=True,
+            anchor_products=_keyframe_multi_image(str(selection.get("model") or "")),
+        )
     if mode == "reference":
         return remake_spec.render_reference(spec)
     return remake_spec.render_generation(spec)
+
+
+def _call_provider(
+    provider: Any,
+    model_id: str,
+    *,
+    prompt: str,
+    duration: float,
+    advanced: dict[str, Any],
+    result_path: Path,
+    anchor_present: bool,
+    images_for: Any,
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One provider call, widening the face mask while Ark refuses the frame.
+
+    A refusal costs nothing and the run retries the same model with a bigger
+    mask, so a missed face never costs the whole run. Once a level is accepted
+    it is reported back, because a wider mask means the model invented more of
+    the picture. Ark is also asked for its last frame: that artifact, not a frame
+    we cut ourselves, is the only face it will trust as the next shot's character.
+    """
+    restricted = _real_person_restricted(model_id)
+    plan = face_mask.steps() if (restricted and anchor_present) else (0,)
+    meta: dict[str, Any] = {}
+    extra: dict[str, Any] = {"return_last_frame": True, "meta": meta} if restricted else {}
+    last_error: Exception | None = None
+    for step in plan:
+        try:
+            provider.generate(
+                prompt,
+                images=images_for(model_id, step),
+                duration=int(duration),
+                resolution=str(advanced.get("resolution") or "720p"),
+                aspect=str(advanced.get("aspect") or "9:16"),
+                model=model_id,
+                output=result_path,
+                **extra,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if restricted and step < face_mask.last_step() and face_mask.is_privacy_error(exc):
+                attempts.append({"model": model_id, "mask_step": step, "error": "拒绝：参考帧可能含真人"})
+                continue
+            raise
+        result: dict[str, Any] = {
+            "model": model_id,
+            "path": str(result_path),
+            "demo": False,
+            "duration_s": duration,
+        }
+        if anchor_present:
+            result["mask_step"] = step
+        if meta.get("last_frame_url"):
+            result["last_frame_url"] = meta["last_frame_url"]
+        if meta.get("last_frame_path"):
+            result["last_frame_path"] = meta["last_frame_path"]
+        return result
+    raise last_error or RuntimeError(f"{model_id} 没有尝试任何生成参数")
+
+
+def _shot_prompt(
+    run: Any,
+    spec: dict[str, Any],
+    shot: dict[str, Any],
+    shot_len: float,
+    *,
+    products: bool,
+    person: bool,
+) -> str:
+    """Render the whole-video contract down to one shot.
+
+    Reusing `render_generation` keeps the image numbering in one place: the
+    anchor is 图片1, the products follow, and the carried character closes the
+    list. A single-shot spec also makes the renderer say "一次连续拍摄", which is
+    true of what the model is being asked for.
+    """
+    one = {
+        **spec,
+        "shots": [shot],
+        "source": {**(spec.get("source") or {}), "duration_s": shot_len},
+    }
+    return remake_spec.render_generation(one, anchor=True, anchor_products=products, anchor_person=person)
+
+
+def _sequence_duration(model_id: str, shot_len: float) -> int:
+    """Nearest provider duration at or above the shot, since shots are never cut."""
+    row = catalog.get(model_id) or {}
+    allowed = sorted(int(value) for value in (row.get("durations") or [4, 5, 8, 10]))
+    target = int(shot_len + 0.999)
+    return next((value for value in allowed if value >= target), allowed[-1])
+
+
+def generate_sequence(run_id: str, selection: dict[str, Any]) -> dict[str, Any] | None:
+    """One clip per reference shot, carrying the character by Ark's own last frame.
+
+    Ark refuses a photoreal face in any reference material, so the source cast can
+    never be kept: every shot's first frame is masked and the person is
+    regenerated. Ark then trusts only its own output as a face reference, so shot
+    N+1 receives shot N's last frame. That is a hard sequential dependency, which
+    is why this loop cannot be parallelised.
+
+    Returns None when the run is not a multi-shot keyframe run, so the caller
+    keeps the single-clip path.
+    """
+    run = store.read_run(run_id)
+    if run is None:
+        raise FileNotFoundError(run_id)
+    model_id = str(selection.get("model") or "")
+    if not model_id or _adapter(model_id) is None:
+        return None
+    skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
+    script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
+    advanced = params.merged_advanced(run.advanced)
+    spec = remake_spec.build_spec(run, skeleton, script)
+    # Iterate the normalised shots: the raw skeleton ones carry no `timed_lines`,
+    # so building a prompt from them silently drops that shot's dialogue.
+    shots = spec.get("shots") or []
+    if len(shots) < 2:
+        return None
+    ref_id = (run.inputs or {}).get("reference_asset_id")
+    if not ref_id:
+        return None
+    source = store.asset_media_path(str(ref_id))
+    products = _product_images(run)[:3]
+    attempts: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    clips: list[Path] = []
+    # The character reference is a URL handed back by Ark, never a local copy:
+    # Ark only trusts its own original artifact, and a re-saved frame loses that
+    # trust. Nothing here is uploaded, so no public hosting is involved.
+    person: str | None = None
+    mask_step = 0
+    if _persona_images(run):
+        warnings.append(
+            "Ark 不接受拟真人物参考图：第 1 镜的人物由模型生成，后续镜头靠尾帧保持一致"
+        )
+    for index, shot in enumerate(shots):
+        start = max(0.0, float(shot.get("start_s") or 0.0))
+        shot_len = max(1.0, float(shot.get("end_s") or start) - start)
+        anchor = store.run_artifact(run_id, f"anchor_{index}.jpg")
+        try:
+            ffmpeg.extract_frame(source, start + 0.05, anchor, width=720)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"第 {index + 1} 镜头首帧抽取失败，改用整片生成：{type(exc).__name__}"[:200])
+            return None
+        prompt = _shot_prompt(
+            run, spec, shot, shot_len,
+            products=bool(products), person=person is not None,
+        )
+
+        def images_for(model: str, step: int, *, _anchor: Path = anchor, _person: str | None = person) -> list:
+            frame = _anchor if step == 0 else face_mask.mask_step(
+                _anchor, _anchor.with_name(f"{_anchor.stem}_m{step}.jpg"), step
+            )
+            frames: list = [frame, *products]
+            if _person is not None:
+                frames.append(_person)
+            return frames[:9]
+
+        result = _call_provider(
+            _adapter(model_id),
+            model_id,
+            prompt=prompt,
+            duration=float(_sequence_duration(model_id, shot_len)),
+            advanced=advanced,
+            result_path=store.run_artifact(run_id, f"shot_{index}.mp4"),
+            anchor_present=True,
+            images_for=images_for,
+            attempts=attempts,
+        )
+        mask_step = max(mask_step, int(result.get("mask_step") or 0))
+        if result.get("last_frame_url"):
+            person = str(result["last_frame_url"])
+        clips.append(Path(str(result["path"])))
+
+    width, height = params.size_for(
+        str(advanced.get("aspect") or "9:16"), str(advanced.get("resolution") or "720p")
+    )
+    plan_data = stitch.plan([{"path": str(path)} for path in clips], width=width, height=height, fit="crop")
+    raw = stitch.execute(plan_data, store.run_artifact(run_id, "provider_raw.mp4"))
+    reference_s = float((skeleton.get("source") or {}).get("duration_s") or 0)
+    if reference_s and abs(float(plan_data["duration_s"]) - reference_s) > 0.6:
+        warnings.append(
+            f"逐镜头成片 {float(plan_data['duration_s']):.1f}s，参考片 {reference_s:.1f}s："
+            "每个镜头受模型时长档位约束，未做裁剪"
+        )
+    if mask_step:
+        warnings.append(f"参考首帧已用第 {mask_step} 级遮挡规避真人审核，人物由模型重新生成")
+    warnings.extend(plan_data.get("warnings") or [])
+    return {
+        "model": model_id,
+        "path": str(raw),
+        "demo": False,
+        "duration_s": float(plan_data["duration_s"]),
+        "segments": [str(path) for path in clips],
+        "shot_count": len(clips),
+        "mask_step": mask_step,
+        "attempts": attempts,
+        "warnings": warnings,
+    }
 
 
 def generate(run_id: str) -> dict[str, Any]:
@@ -372,6 +598,21 @@ def generate(run_id: str) -> dict[str, Any]:
             if degraded.get("mode") == "analysis_only":
                 raise RuntimeError(f"完整复刻失败，且没有可降级的视频模型：{error}") from exc
             selection = degraded
+    if str(selection.get("mode") or "") == "keyframe":
+        sequence = generate_sequence(run_id, selection)
+        if sequence is not None:
+            run = store.read_run(run_id) or run
+            run.advanced["model"] = str(sequence.get("model") or "")
+            if selection:
+                run.selection = {
+                    **selection,
+                    "model": str(sequence.get("model") or ""),
+                    "fallback": bool(sequence.get("attempts")) or bool(selection.get("fallback")),
+                }
+            store.write_run(run)
+            if attempts:
+                sequence["attempts"] = list(attempts) + list(sequence.get("attempts") or [])
+            return sequence
     advanced = params.merged_advanced(run.advanced)
     selected_duration = (selection.get("params") or {}).get("duration")
     duration = max(1.0, float(selected_duration or advanced.get("duration") or 12))
@@ -383,13 +624,23 @@ def generate(run_id: str) -> dict[str, Any]:
     skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
     prompt = _generation_prompt(run, script, skeleton, selection)
     images = _reference_images(run)
+    anchor: Path | None = None
     if str(selection.get("mode") or "") == "keyframe":
         anchor = _keyframe_image(run, skeleton, run_id)
-        if anchor is not None:
-            # Keyframe adapters take exactly one image; the anchor wins over
-            # product references, which is why the policy skips this rung for
-            # product replacement.
-            images = [anchor]
+
+    def _attempt_images(model_id: str, step: int) -> list[Any]:
+        if anchor is None:
+            return list(images)
+        frame: Path = anchor if step == 0 else face_mask.mask_step(
+            anchor, result_path.with_name(f"anchor_mask{step}.jpg"), step
+        )
+        frames: list[Any] = [frame]
+        # Ark-class adapters keep the product references next to the anchor;
+        # Kling-class adapters take a single image, so the anchor wins there.
+        if images and _keyframe_multi_image(model_id):
+            frames.extend(images)
+        return frames
+
     candidates = _video_candidates(run)
     if not candidates:
         raise RuntimeError("没有可用的视频模型：请在设置里启用对应厂商 key")
@@ -407,20 +658,25 @@ def generate(run_id: str) -> dict[str, Any]:
                 ffmpeg.make_synthetic_clip(source, result_path, duration=duration, width=width, height=height, fps=int(advanced.get("fps") or 30))
                 generated = {"model": model_id, "path": str(result_path), "demo": True, "duration_s": duration}
             else:
-                provider.generate(
-                    prompt,
-                    images=images,
-                    duration=int(duration),
-                    resolution=str(advanced.get("resolution") or "720p"),
-                    aspect=str(advanced.get("aspect") or "9:16"),
-                    model=model_id,
-                    output=result_path,
+                generated = _call_provider(
+                    provider,
+                    model_id,
+                    prompt=prompt,
+                    duration=duration,
+                    advanced=advanced,
+                    result_path=result_path,
+                    anchor_present=anchor is not None,
+                    images_for=_attempt_images,
+                    attempts=attempts,
                 )
-                generated = {"model": model_id, "path": str(result_path), "demo": False, "duration_s": duration}
             generated["attempts"] = attempts
             warnings = [f"已切换到 {model_id}"] if attempts else []
             if attempts and attempts[0].get("rung") == "full":
                 warnings.insert(0, f"完整复刻失败，已降级为按拆解生成：{str(attempts[0].get('error') or '')[:160]}")
+            if generated.get("mask_step"):
+                warnings.append(
+                    f"参考首帧已用第 {generated['mask_step']} 级遮挡规避真人审核，人物由模型重新生成"
+                )
             generated["warnings"] = warnings
             run = store.read_run(run_id) or run
             run.advanced["model"] = model_id
