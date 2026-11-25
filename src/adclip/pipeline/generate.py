@@ -127,22 +127,6 @@ def _script_prompt(run: Any, script: dict[str, Any]) -> str:
     return "".join(part for part in parts if part).strip()[:1800]
 
 
-def _product_images(run: Any) -> list[Path]:
-    paths: list[Path] = []
-    for asset_id in list((run.inputs or {}).get("product_asset_ids") or [])[:3]:
-        try:
-            paths.append(store.asset_media_path(str(asset_id)))
-        except Exception:
-            continue
-    ref = (run.inputs or {}).get("reference_image_asset_id")
-    if ref:
-        try:
-            paths.append(store.asset_media_path(str(ref)))
-        except Exception:
-            pass
-    return paths
-
-
 def _persona_images(run: Any) -> list[Path]:
     paths: list[Path] = []
     advanced = run.advanced or {}
@@ -249,7 +233,7 @@ def generate_h3_reference(run_id: str) -> dict[str, Any]:
         raise RuntimeError("H3 参考复刻仅支持 4–15 秒参考片")
     if Path(source).stat().st_size > 50 * 1024 * 1024:
         raise RuntimeError("参考片超过 MiniMax 50MB 上限")
-    products = _product_images(run)
+    products = _reference_images(run)
     personas = _persona_images(run)
     from . import remake as remake_mod
     script_doc = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
@@ -348,15 +332,20 @@ def _real_person_restricted(model_id: str) -> bool:
     return str((row.get("remake") or {}).get("real_person_reference") or "") == "restricted"
 
 
-def _generation_prompt(run: Any, script: dict[str, Any], skeleton: dict[str, Any], selection: dict[str, Any]) -> str:
-    """Prompt for a model that does not receive the reference video.
+def _render_prompt(
+    run: Any,
+    script: dict[str, Any],
+    skeleton: dict[str, Any],
+    selection: dict[str, Any],
+    *,
+    product_images: int | None = None,
+) -> str:
+    """The analysis-driven prompt, ignoring a saved override.
 
-    A saved `inputs.prompt_override` always wins so the operator can inspect and
-    edit the rendered prompt before spending a generation call.
+    This is the single authority on which renderer a mode uses. The count of
+    product images is passed in rather than guessed, so the ordinals in the text
+    always match the `content` array the adapter actually sends.
     """
-    override = str((run.inputs or {}).get("prompt_override") or "").strip()
-    if override:
-        return override[:4000]
     if run.scenario != "viral-remake":
         return _script_prompt(run, script)
     spec = remake_spec.build_spec(run, skeleton, script)
@@ -366,10 +355,70 @@ def _generation_prompt(run: Any, script: dict[str, Any], skeleton: dict[str, Any
             spec,
             anchor=True,
             anchor_products=_keyframe_multi_image(str(selection.get("model") or "")),
+            product_images=product_images,
         )
     if mode == "reference":
-        return remake_spec.render_reference(spec)
-    return remake_spec.render_generation(spec)
+        return remake_spec.render_reference(spec, product_images=product_images)
+    return remake_spec.render_generation(spec, product_images=product_images)
+
+
+def preview_prompt(
+    run: Any,
+    script: dict[str, Any],
+    skeleton: dict[str, Any],
+    selection: dict[str, Any],
+) -> str:
+    """The text generation would send, including the per-shot split.
+
+    A multi-shot keyframe run has no single prompt: `generate_sequence` builds one
+    per shot, carrying the previous shot's character. The preview shows the same
+    blocks instead of pretending one prompt covers the whole run.
+    """
+    products = len(_reference_images(run))
+    mode = str(selection.get("mode") or "generation")
+    if run.scenario != "viral-remake":
+        return _render_prompt(run, script, skeleton, selection, product_images=products)
+    if mode == "h3_reference":
+        audio_mode = str((getattr(run, "advanced", None) or {}).get("audio_mode") or "regenerate")
+        spec = remake_spec.build_spec(run, skeleton, script)
+        return remake_spec.render_h3(
+            spec, run, skeleton, script, audio_mode=audio_mode, product_images=products,
+        )
+    if mode != "keyframe":
+        return _render_prompt(run, script, skeleton, selection, product_images=products)
+    spec = remake_spec.build_spec(run, skeleton, script)
+    shots = spec.get("shots") or []
+    if len(shots) < 2:
+        return _render_prompt(run, script, skeleton, selection, product_images=products)
+    blocks: list[str] = []
+    for index, shot in enumerate(shots):
+        start = float(shot.get("start_s") or 0.0)
+        shot_len = max(1.0, float(shot.get("end_s") or start) - start)
+        body = _shot_prompt(
+            run, spec, shot, shot_len,
+            product_images=products, person=index > 0,
+        )
+        blocks.append(f"—— 镜头 {index + 1} ——\n{body}")
+    return "\n\n".join(blocks)
+
+
+def _generation_prompt(
+    run: Any,
+    script: dict[str, Any],
+    skeleton: dict[str, Any],
+    selection: dict[str, Any],
+    *,
+    product_images: int | None = None,
+) -> str:
+    """Prompt for the actual call; a saved override always wins.
+
+    `inputs.prompt_override` lets the operator inspect and edit the rendered
+    prompt before spending a generation call.
+    """
+    override = str((run.inputs or {}).get("prompt_override") or "").strip()
+    if override:
+        return override[:4000]
+    return _render_prompt(run, script, skeleton, selection, product_images=product_images)
 
 
 def _call_provider(
@@ -437,7 +486,7 @@ def _shot_prompt(
     shot: dict[str, Any],
     shot_len: float,
     *,
-    products: bool,
+    product_images: int,
     person: bool,
 ) -> str:
     """Render the whole-video contract down to one shot.
@@ -452,7 +501,13 @@ def _shot_prompt(
         "shots": [shot],
         "source": {**(spec.get("source") or {}), "duration_s": shot_len},
     }
-    return remake_spec.render_generation(one, anchor=True, anchor_products=products, anchor_person=person)
+    return remake_spec.render_generation(
+        one,
+        anchor=True,
+        anchor_products=bool(product_images),
+        anchor_person=person,
+        product_images=product_images,
+    )
 
 
 def _sequence_duration(model_id: str, shot_len: float) -> int:
@@ -494,7 +549,10 @@ def generate_sequence(run_id: str, selection: dict[str, Any]) -> dict[str, Any] 
     if not ref_id:
         return None
     source = store.asset_media_path(str(ref_id))
-    products = _product_images(run)[:3]
+    # The same list the single-clip path sends, capped so anchor + products +
+    # character never exceeds Ark's nine slots. Capping here (not at send time)
+    # keeps the prompt ordinals honest.
+    products = _reference_images(run)[:7]
     attempts: list[dict[str, Any]] = []
     warnings: list[str] = []
     clips: list[Path] = []
@@ -518,7 +576,7 @@ def generate_sequence(run_id: str, selection: dict[str, Any]) -> dict[str, Any] 
             return None
         prompt = _shot_prompt(
             run, spec, shot, shot_len,
-            products=bool(products), person=person is not None,
+            product_images=len(products), person=person is not None,
         )
 
         def images_for(model: str, step: int, *, _anchor: Path = anchor, _person: str | None = person) -> list:
@@ -528,7 +586,7 @@ def generate_sequence(run_id: str, selection: dict[str, Any]) -> dict[str, Any] 
             frames: list = [frame, *products]
             if _person is not None:
                 frames.append(_person)
-            return frames[:9]
+            return frames
 
         result = _call_provider(
             _adapter(model_id),
@@ -622,8 +680,10 @@ def generate(run_id: str) -> dict[str, Any]:
     result_path = store.run_artifact(run_id, "provider_raw.mp4")
     script = store.read_json(store.run_dir(run_id) / "artifacts" / "script.json", {}) or {}
     skeleton = store.read_json(store.run_dir(run_id) / "artifacts" / "skeleton.json", {}) or {}
-    prompt = _generation_prompt(run, script, skeleton, selection)
     images = _reference_images(run)
+    # The prompt has to know how many product images travel with the request, so
+    # the list is resolved before it is rendered rather than after.
+    prompt = _generation_prompt(run, script, skeleton, selection, product_images=len(images))
     anchor: Path | None = None
     if str(selection.get("mode") or "") == "keyframe":
         anchor = _keyframe_image(run, skeleton, run_id)

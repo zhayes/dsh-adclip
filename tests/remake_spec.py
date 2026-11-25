@@ -210,6 +210,29 @@ def check_anchor_prompt() -> None:
     assert "图片1=参考片首帧" in text, text
     assert "图片1=替换后的商品" not in text, text
 
+    # The ordinal comes from the caller, not from `inputs`: a reference image can
+    # join the product list, and a stale count would point 主持人 at a product —
+    # which changes what the model thinks each picture is, not just the wording.
+    two = remake_spec.render_generation(
+        {"constraints": {"product_count": 1}}, anchor=True, anchor_products=True,
+        anchor_person=True, product_images=2,
+    )
+    assert "图片2–3=替换后的商品" in two, two
+    assert "图片4=本片固定的主持人" in two, two
+
+    # Callers that pass no count keep the old behaviour.
+    legacy = remake_spec.render_generation(
+        {"constraints": {"product_count": 1}}, anchor=True, anchor_products=True, anchor_person=True,
+    )
+    assert "图片2=替换后的商品" in legacy, legacy
+    assert "图片3=本片固定的主持人" in legacy, legacy
+
+    reference = remake_spec.render_reference(
+        {"constraints": {"product_count": 1}, "shots": [], "requirements": {}, "global": {}},
+        product_images=0,
+    )
+    assert "图片1=替换后的商品" not in reference, reference
+
 
 def check_override() -> None:
     run = _run(override="自定义提示词：一镜到底")

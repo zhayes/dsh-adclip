@@ -22,8 +22,8 @@ Current package versions:
 
 | Piece | Version |
 | --- | --- |
-| DSH plugin (`plugin/package.json`) | `0.5.50` |
-| Python engine (`adclip.api.VERSION`) | `0.1.33` |
+| DSH plugin (`plugin/package.json`) | `0.5.51` |
+| Python engine (`adclip.api.VERSION`) | `0.1.34` |
 
 Do not bump versions unless you are actually releasing. A client-only change
 still needs a plugin version bump and reinstall to reach the running DSH profile.
@@ -129,7 +129,13 @@ dist/                      staged plugin artifacts (ignored)
   `real_person_reference=restricted`. When the anchor is sent, `图片1` is the
   first frame and the product shifts to `图片2…`, so
   `render_generation(anchor_products=True)` must stay in sync with the image
-  order in `generate()`.
+  order in `generate()`. The ordinal count is **passed in** as
+  `product_images=len(products)` from the real list, never re-derived from
+  `inputs`: `reference_image_asset_id` joins the product list, so counting
+  `product_asset_ids` alone left a picture unclaimed and shifted every later
+  ordinal (a 主持人 label landing on a product is a semantic error, not a wording
+  one). `_product_images()` was deleted for the same reason — it duplicated
+  `_reference_images()`.
 - **Ark 一律换人。** Seedance 的输入审核逐帧看画面，不看来源也不看任何声明：
   真人实拍和 AI 生成的高拟真人脸同样被拒，请求体里没有可用的授权字段。
   所以 `generate()` 对 `real_person_reference=restricted` 的模型一律先抹脸再送，

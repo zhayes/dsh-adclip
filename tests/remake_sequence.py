@@ -10,6 +10,7 @@ Run with:
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -106,6 +107,15 @@ def main() -> None:
     # frame loses the trust that lets a face through at all.
     assert second[-1] == "https://example.com/last.jpg", second
     assert "图片2=本片固定的主持人" in calls[1]["prompt"], calls[1]["prompt"]
+
+    # Every picture must be claimed exactly once: the ordinals in the text have
+    # to cover 1..len(images) with no gap and no overflow. A wrong ordinal is a
+    # semantic error — the model reads that picture as something it is not.
+    for call in calls:
+        used = sorted({int(n) for n in re.findall(r"图片(\d+)", call["prompt"])})
+        assert used == list(range(1, len(call["images"]) + 1)), (
+            used, len(call["images"]), call["prompt"]
+        )
 
     # Both shots are asked for a provider duration, never a fractional one.
     assert all(isinstance(call["duration"], int) and call["duration"] >= 4 for call in calls), calls

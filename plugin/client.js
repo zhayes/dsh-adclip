@@ -585,6 +585,19 @@ window.__ModuleLoader__.load({
       return Object.assign({}, data.asset, { deduplicated: Boolean(data.deduplicated) })
     }
 
+    // Ark rejects a reference image outside 300–6000 px per side, so a too-small
+    // product shot is a wasted upload and a failed run later. Reading the size in
+    // the browser makes the complaint immediate and costs no round trip.
+    function imageSize(file) {
+      return new Promise((resolve) => {
+        const url = URL.createObjectURL(file)
+        const img = new Image()
+        img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }) }
+        img.onerror = () => { URL.revokeObjectURL(url); resolve({ w: 0, h: 0 }) }
+        img.src = url
+      })
+    }
+
     function fmt(seconds) {
       const s = Number(seconds || 0)
       if (!s) return '—'
@@ -966,7 +979,7 @@ window.__ModuleLoader__.load({
         },
           asset ? h('video', { src: mediaUrl(asset.path), muted: true, playsInline: true }) : h('div', { className: 'adp-drop-empty' },
             h('b', null, busy ? '上传中…' : '拖入参考视频'),
-            h('span', null, '或点击选择 · mp4 / mov / webm · ≤30s')
+            h('span', null, '或点击选择 · mp4 / mov / webm · ≤15s')
           ),
           asset ? h('div', { className: 'adp-drop-overlay' },
             h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, asset.name),
@@ -981,7 +994,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MediaGrid({ assets, onAdd, onRemove, onPreview, max = 9 }) {
+    function MediaGrid({ assets, onAdd, onRemove, onPreview, max = 9, minSide = 0 }) {
       const input = useRef(null)
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
@@ -991,8 +1004,16 @@ window.__ModuleLoader__.load({
         setBusy(true); setErr('')
         try {
           const out = []
-          for (const file of list) out.push(await uploadFile(file, 'image'))
-          onAdd(out)
+          const small = []
+          for (const file of list) {
+            if (minSide > 0) {
+              const { w, h } = await imageSize(file)
+              if (!w || !h || w < minSide || h < minSide) { small.push(file.name + ' ' + w + '×' + h); continue }
+            }
+            out.push(await uploadFile(file, 'image'))
+          }
+          if (out.length) onAdd(out)
+          if (small.length) setErr('宽高需 ≥ ' + minSide + 'px：' + small.join('、'))
         } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
       }
       return h('div', { className: 'adp-col' },
@@ -1712,7 +1733,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'adp-page-meta' },
             h(Badge, { status: hasRealModel ? 'ok' : 'bad' }, hasRealModel ? '模型已就绪' : '未配置模型'),
-            h('span', null, '≤30s 参考片')
+            h('span', null, '≤15s 参考片')
           )
         ),
         h('div', { className: 'adp-panel' },
@@ -1729,13 +1750,12 @@ window.__ModuleLoader__.load({
                 h('span', null, '商品图'),
                 h('span', { className: 'count' }, (products.length || 0) + ' / 9')
               ),
-              h(MediaGrid, { assets: products, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview })
+              h(MediaGrid, { assets: products, minSide: 300, onAdd: (list) => setProducts(prev => prev.concat(list).slice(0, 9)), onRemove: (id) => setProducts(prev => prev.filter(x => x.id !== id)), onPreview: setPreview })
             ),
             h('section', { className: 'adp-form-col' },
               h('div', { className: 'adp-section-head' },
                 h('span', { className: 'adp-step' }, '02'),
-                h('span', { className: 'adp-section-title' }, '创作需求'),
-                h('span', { className: 'adp-section-note' }, '不用写 prompt')
+                h('span', { className: 'adp-section-title' }, '创作需求')
               ),
               h('div', { className: 'adp-brief' },
                 h('div', { className: 'adp-brief-head' },

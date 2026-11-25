@@ -314,6 +314,7 @@ def render_generation(
     anchor: bool = False,
     anchor_products: bool = False,
     anchor_person: bool = False,
+    product_images: int | None = None,
 ) -> str:
     """Full description for a model that cannot see the reference video.
 
@@ -362,7 +363,14 @@ def render_generation(
             f"{'、'.join(preserve) if preserve else '镜头、场景、动作、构图、节奏、转场'} 与参考片一致。"
         )
     materials: list[str] = []
-    product_count = int((spec.get("constraints") or {}).get("product_count") or 0)
+    # The caller knows how many product images it will actually send. Counting
+    # them from `inputs` guess wrong as soon as a reference image joins the list,
+    # and a wrong ordinal points the model at the wrong picture: 图片3=主持人 on
+    # an image that is a product is a semantic error, not a wording problem.
+    product_count = (
+        product_images if product_images is not None
+        else int((spec.get("constraints") or {}).get("product_count") or 0)
+    )
     if anchor:
         materials.append("图片1=参考片首帧，第 1 帧必须与图片一致，后续动作从该帧自然延续")
         # The anchor occupies 图片1, so product references shift by one. Only
@@ -481,7 +489,7 @@ def render_generation(
     return text[:limit]
 
 
-def render_reference(spec: dict[str, Any], *, limit: int = 1500) -> str:
+def render_reference(spec: dict[str, Any], *, limit: int = 1500, product_images: int | None = None) -> str:
     """Short contract for a model that receives the reference video."""
     shots = spec.get("shots") or []
     req = spec.get("requirements") or {}
@@ -490,7 +498,10 @@ def render_reference(spec: dict[str, Any], *, limit: int = 1500) -> str:
         "任务：视频编辑，不是重新拍摄。保留参考视频1的镜头、景别、运镜、场景、动作、构图、节奏和转场。",
         f"只替换：{scope}。未提及的部分保持原样。",
     ]
-    if int((spec.get("constraints") or {}).get("product_count") or 0):
+    if (
+        product_images if product_images is not None
+        else int((spec.get("constraints") or {}).get("product_count") or 0)
+    ):
         lines.append("图片1=替换后的商品；保留原商品的位置、大小、手持方式和出现时机。")
     persona = str((spec.get("global") or {}).get("persona") or "").strip()
     if persona and "人物" in scope:
@@ -527,6 +538,7 @@ def render_h3(
     script: dict[str, Any],
     *,
     audio_mode: str = "regenerate",
+    product_images: int | None = None,
 ) -> str:
     """H3 keeps its own long contract; this wrapper keeps one entry point."""
     from . import remake as remake_mod
@@ -535,18 +547,11 @@ def render_h3(
     return remake_mod.build_h3_replace_prompt(
         run,
         skeleton,
-        product_count=int(constraints.get("product_count") or 0),
+        product_count=(
+            product_images if product_images is not None
+            else int(constraints.get("product_count") or 0)
+        ),
         person_count=int(constraints.get("person_count") or 0),
         script_doc=script,
         audio_mode=audio_mode,
     )
-
-
-def render(spec: dict[str, Any], mode: str, *, run: Any = None, skeleton: dict[str, Any] | None = None,
-           script: dict[str, Any] | None = None, audio_mode: str = "regenerate") -> str:
-    """Pick the renderer for a selection mode."""
-    if str(mode) == "h3_reference" and run is not None and skeleton is not None and script is not None:
-        return render_h3(spec, run, skeleton, script, audio_mode=audio_mode)
-    if str(mode) in {"reference", "keyframe"}:
-        return render_reference(spec)
-    return render_generation(spec)

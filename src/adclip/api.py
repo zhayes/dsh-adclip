@@ -33,6 +33,7 @@ from .pipeline import remake_spec
 from .pipeline import replace as segment_replace
 from .pipeline import qa as qa_pipeline
 from .pipeline import runner, segment
+from .pipeline import generate as generate_pipeline
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -50,7 +51,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AdClip", version="0.1.0", lifespan=_lifespan)
-VERSION = "0.1.33"
+VERSION = "0.1.34"
 
 
 def _media_type(path: Path) -> str:
@@ -648,8 +649,8 @@ def prompt_preview(run_id: str) -> dict[str, Any]:
     selection = getattr(run, "selection", None) or {}
     mode = str(selection.get("mode") or "generation")
     spec = remake_spec.build_spec(run, skeleton, script)
-    audio_mode = str((run.advanced or {}).get("audio_mode") or "regenerate")
-    auto = remake_spec.render(spec, mode, run=run, skeleton=skeleton, script=script, audio_mode=audio_mode)
+    # The generator's own path, so this panel cannot drift from what is sent.
+    auto = generate_pipeline.preview_prompt(run, script, skeleton, selection)
     override = str((run.inputs or {}).get("prompt_override") or "")
     text = override or auto
     return {
